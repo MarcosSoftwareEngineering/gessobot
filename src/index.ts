@@ -167,5 +167,3 @@ async function iniciarBot(): Promise<void> {
     }
 }
 
-// Iniciar o sistema
-iniciarBot().catch(console.error);
