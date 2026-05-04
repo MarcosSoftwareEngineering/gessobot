@@ -29,52 +29,38 @@ app.get('/', (req, res) => {
         <head>
             <title>M.S.E - GessoBot Panel</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
             <style>
-                body { background: #f4f7f6; font-family: sans-serif; }
-                .card { border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-                #qrcode img { width: 256px; height: 256px; margin: 20px auto; display: block; border: 10px solid white; border-radius: 10px; }
-                .status-online { color: #28a745; font-weight: bold; }
-                .status-offline { color: #dc3545; font-weight: bold; }
+                body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; color: #333; }
+                .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: inline-block; max-width: 400px; width: 100%; }
+                #qr-container { margin: 20px 0; min-height: 250px; display: flex; align-items: center; justify-content: center; border: 2px dashed #ddd; border-radius: 10px; }
+                #qr-container img { max-width: 100%; height: auto; }
+                .status-badge { padding: 5px 15px; border-radius: 20px; font-weight: bold; background: #eee; }
+                .online { background: #d4edda; color: #155724; }
+                .aguardando { background: #fff3cd; color: #856404; }
+                button { background: #ff4747; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+                button:hover { background: #d43f3f; }
+                footer { margin-top: 20px; font-size: 0.8em; color: #888; }
             </style>
         </head>
-        <body class="container py-5">
-            <div class="row justify-content-center">
-                <div class="col-md-6 text-center">
-                    <div class="card p-4">
-                        <h2 class="mb-4">🏗️ GessoBot v2.0</h2>
-                        <div id="status-box" class="mb-3">Status: <span id="status" class="status-offline">Carregando...</span></div>
-                        <div id="qrcode">
-                            <p class="text-muted">Aguardando QR Code...</p>
-                        </div>
-                        <div class="mt-4">
-                            <button onclick="resetAuth()" class="btn btn-danger w-100 mb-2">🗑️ Resetar LocalAuth (Apagar Sessão)</button>
-                            <small class="text-muted">Use o reset se o QR Code não carregar ou se quiser trocar de número.</small>
-                        </div>
-                    </div>
+        <body>
+            <div class="card">
+                <h2>🛠️ GessoBot v2.0</h2>
+                <p>Status: <span id="status" class="status-badge">${botStatus}</span></p>
+                <div id="qr-container">
+                    ${lastQr ? `<img src="${lastQr}" />` : '<p>Aguardando QR Code...<br><small>Isso pode levar 30s</small></p>'}
                 </div>
+                <button onclick="confirmReset()">Reiniciar Sessão (Reset)</button>
             </div>
+            <footer>Marcos Software Engineer © 2026</footer>
 
-            <script src="/socket.io/socket.io.js"></script>
             <script>
-                const socket = io();
-                const statusEl = document.getElementById('status');
-                const qrEl = document.getElementById('qrcode');
-
-                socket.on('status', (s) => {
-                    statusEl.innerText = s.toUpperCase();
-                    statusEl.className = s === 'online' ? 'status-online' : 'status-offline';
-                });
-
-                socket.on('qr', (url) => {
-                    qrEl.innerHTML = '<img src="' + url + '" />';
-                });
-
-                function resetAuth() {
-                    if(confirm("Deseja realmente apagar a sessão? O bot será reiniciado.")) {
-                        window.location.href = '/reset-auth';
+                function confirmReset() {
+                    if(confirm("Deseja realmente apagar a sessão atual e reiniciar o bot?")) {
+                        location.href = '/reset-auth';
                     }
                 }
+                // Atualiza a página automaticamente para buscar novos status ou QR
+                setTimeout(() => { location.reload(); }, 5000);
             </script>
         </body>
         </html>
@@ -83,13 +69,16 @@ app.get('/', (req, res) => {
 
 // --- ROTA DE RESET (APAGAR LOCALAUTH) ---
 app.get('/reset-auth', (req, res) => {
+    // Caminho para a pasta de autenticação
     const sessionPath = path.join(__dirname, '../.wwebjs_auth');
     try {
         if (fs.existsSync(sessionPath)) {
             fs.rmSync(sessionPath, { recursive: true, force: true });
         }
         res.send('<h1>Sessão Apagada!</h1><p>O servidor está reiniciando... Volte para a <a href="/">Página Inicial</a> em 10 segundos.</p>');
-        setTimeout(() => process.exit(1), 2000); // PM2 vai reiniciar o bot automaticamente
+        
+        // Finaliza o processo. O PM2 no Google Cloud vai subir o bot de novo automaticamente
+        setTimeout(() => process.exit(1), 2000); 
     } catch (err) {
         res.status(500).send('Erro ao resetar: ' + err);
     }
@@ -127,20 +116,22 @@ async function iniciarBot(): Promise<void> {
 
     client.on('qr', async (qr) => {
         botStatus = 'aguardando_qr';
-        io.emit('status', botStatus);
         
-        // Gera o QR Code para o terminal
+        // Gera no terminal para backup
         const qrcodeTerminal = require('qrcode-terminal');
         qrcodeTerminal.generate(qr, { small: true });
 
-        // Converte o QR para imagem Base64 para o Painel Web
+        // Salva e envia para o Painel Web
         const qrImage = await QRCode.toDataURL(qr);
+        lastQr = qrImage; // Fundamental para o Front-end ler
         io.emit('qr', qrImage);
+        io.emit('status', botStatus);
         console.log('📱 QR Code gerado e enviado para o painel.');
     });
 
     client.on('authenticated', () => {
         botStatus = 'autenticado';
+        lastQr = ''; // Limpa o QR pois já logou
         io.emit('status', botStatus);
         console.log('✅ Autenticado!');
     });
@@ -162,6 +153,7 @@ async function iniciarBot(): Promise<void> {
 
     client.on('disconnected', (reason) => {
         botStatus = 'desconectado';
+        lastQr = '';
         io.emit('status', botStatus);
         console.log(`⚠️ Desconectado: ${reason}`);
         setTimeout(() => process.exit(1), 5000);
