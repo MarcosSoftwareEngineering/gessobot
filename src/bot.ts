@@ -1,276 +1,72 @@
 import { Client, Message } from 'whatsapp-web.js';
-import { getSessao, salvarSessao, resetarSessao, salvarOrcamentoDB } from './sessao';
-import { calcularOrcamento, formatarOrcamento } from './orcamento';
-import { TipoServico, Sessao } from './types';
-import { simulaDigitacao, pausaLeitura, pausaEntresMensagens, getMultiplicadorWarmup } from './humanizer';
-import { verificarRateLimit } from './rateLimit';
-import { aplicarFiltros } from './filtros';
 
-const NOME_EMPRESA = process.env.NOME_EMPRESA || 'GessoBot Construções';
-const NUMERO_ATENDENTE = process.env.NUMERO_ATENDENTE || '';
-const DESCONTO_PADRAO = parseInt(process.env.DESCONTO_PADRAO || '5', 10);
+// Memória do Bot: Guarda em qual passo do funil cada cliente está
+const estadoCliente = new Map<string, any>();
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export async function processarMensagem(client: Client, msg: Message) {
+    const chatId = msg.from;
+    const texto = msg.body.toLowerCase();
 
-async function enviarMensagem(client: Client, chat: any, texto: string): Promise<void> {
-  const multiplicador = getMultiplicadorWarmup();
-  await simulaDigitacao(chat, texto);
-  await delay(Math.floor(300 * multiplicador));
-  await client.sendMessage(chat.id._serialized, texto);
-  await pausaEntresMensagens();
-}
+    // Se a mensagem for de um grupo, o bot ignora
+    if (chatId.includes('@g.us')) return;
 
-function menuPrincipal(): string {
-  return `🏗️ *Bem-vindo ao GessoBot!*
-_Automação Inteligente para Orçamentos de Gesso_
+    // Recupera a ficha do cliente. Se for novo, começa no passo 'INICIO'
+    let ficha = estadoCliente.get(chatId) || { passo: 'INICIO' };
 
-Qual serviço você precisa orçar?
-
-1️⃣ Forro de Gesso Liso
-2️⃣ Gesso em Parede
-3️⃣ Sancas e Molduras
-4️⃣ Drywall / Divisória
-5️⃣ Gesso 3D / Decorativo
-
-Digite o *número* da opção desejada.`;
-}
-
-function menuAcabamento(): string {
-  return `🎨 Qual tipo de acabamento você prefere?
-
-1️⃣ Liso (padrão)
-2️⃣ Texturizado
-3️⃣ Premium / Rebaixado
-
-Digite o número da opção.`;
-}
-
-export async function processarMensagem(client: Client, msg: Message): Promise<void> {
-  // 1. Filtros: grupos, canais, status, broadcasts
-  const filtro = await aplicarFiltros(msg);
-  if (filtro.bloqueado) {
-    console.log(`🚫 Mensagem bloqueada: ${filtro.motivo}`);
-    return;
-  }
-
-  const numero = msg.from;
-  const texto = msg.body?.trim().toLowerCase() || '';
-
-  // 2. Rate limit
-  const limite = verificarRateLimit(numero);
-  if (!limite.permitido) {
-    console.log(`⏳ Rate limit para ${numero}: ${limite.motivo}`);
-    return;
-  }
-
-  // 3. Pausa de "leitura" antes de responder
-  await pausaLeitura(msg.body || '');
-
-  // 4. Buscar sessão
-  const sessao = await getSessao(numero);
-
-  // Evita processamento duplo
-  if (sessao.isProcessing) return;
-  sessao.isProcessing = true;
-  await salvarSessao(numero, sessao);
-
-  try {
-    const chat = await msg.getChat();
-    await rotearMensagem(client, chat, numero, texto, sessao);
-  } finally {
-    sessao.isProcessing = false;
-    await salvarSessao(numero, sessao);
-  }
-}
-
-async function rotearMensagem(
-  client: Client,
-  chat: any,
-  numero: string,
-  texto: string,
-  sessao: Sessao
-): Promise<void> {
-  // Comando de reset global
-  if (['cancelar', 'sair', 'reiniciar', 'menu', 'início', 'inicio'].includes(texto)) {
-    await resetarSessao(numero);
-    const s = await getSessao(numero);
-    Object.assign(sessao, s);
-    await enviarMensagem(client, chat, `🔄 Sessão reiniciada!\n\n${menuPrincipal()}`);
-    sessao.estado = 'MENU_SERVICO';
-    return;
-  }
-
-  // Encaminhar para atendente
-  if (['falar com atendente', 'atendente', 'humano', 'pessoa'].some((k) => texto.includes(k))) {
-    const link = `https://wa.me/${NUMERO_ATENDENTE}`;
-    await enviarMensagem(
-      client,
-      chat,
-      `👨‍💼 Vou te conectar com nosso atendente!\n\nClique aqui para falar diretamente: ${link}\n\nOu aguarde, ele retornará em breve. 😊`
-    );
-    await resetarSessao(numero);
-    Object.assign(sessao, { estado: 'INICIO', dados: {} });
-    return;
-  }
-
-  switch (sessao.estado) {
-    case 'INICIO':
-      await enviarMensagem(
-        client,
-        chat,
-        `👋 Olá! Antes de começar, qual é o seu *nome*?`
-      );
-      sessao.estado = 'AGUARDANDO_NOME';
-      break;
-
-    case 'AGUARDANDO_NOME':
-      sessao.dados.nome = capitalize(texto);
-      await enviarMensagem(
-        client,
-        chat,
-        `Prazer, *${sessao.dados.nome}*! 😄\n\n${menuPrincipal()}`
-      );
-      sessao.estado = 'MENU_SERVICO';
-      break;
-
-    case 'MENU_SERVICO': {
-      const mapa: Record<string, TipoServico> = {
-        '1': 'forro_liso',
-        '2': 'gesso_parede',
-        '3': 'sancas_molduras',
-        '4': 'drywall',
-        '5': 'gesso_3d',
-      };
-      const servico = mapa[texto];
-      if (!servico) {
-        await enviarMensagem(client, chat, `⚠️ Por favor, digite um número de *1 a 5* para escolher o serviço.`);
-        break;
-      }
-      sessao.dados.servico = servico;
-
-      if (servico === 'sancas_molduras') {
-        await enviarMensagem(
-          client,
-          chat,
-          `📏 Quantos *metros lineares* de sancas/molduras você precisa?\n\nEx: _18_ ou _25.5_`
-        );
-        sessao.estado = 'AGUARDANDO_METROS_LINEARES';
-      } else {
-        await enviarMensagem(
-          client,
-          chat,
-          `📐 Qual é a *metragem* (m²) do ambiente?\n\nEx: _45_ ou _30.5_`
-        );
-        sessao.estado = 'AGUARDANDO_METRAGEM';
-      }
-      break;
+    // PASSO 1: A Saudação e Captura de Nome
+    if (ficha.passo === 'INICIO') {
+        await client.sendMessage(chatId, `Olá! 👋 Sou o *GessoBot*, o assistente virtual da nossa empresa.\n\nPara eu te passar um orçamento rapidinho, como eu posso te chamar?`);
+        ficha.passo = 'ESPERANDO_NOME';
+        estadoCliente.set(chatId, ficha);
+        return;
     }
 
-    case 'AGUARDANDO_METRAGEM': {
-      const valor = parseFloat(texto.replace(',', '.'));
-      if (isNaN(valor) || valor <= 0) {
-        await enviarMensagem(client, chat, `⚠️ Por favor, informe a metragem em m². Ex: _45_ ou _30.5_`);
-        break;
-      }
-      sessao.dados.metragem = valor;
-      await enviarMensagem(client, chat, `🏠 Qual é o *ambiente*?\n\nEx: _Sala, Quarto, Cozinha, Banheiro, Escritório..._`);
-      sessao.estado = 'AGUARDANDO_AMBIENTE';
-      break;
+    // PASSO 2: Captura do Serviço
+    if (ficha.passo === 'ESPERANDO_NOME') {
+        ficha.nome = msg.body;
+        await client.sendMessage(chatId, `Prazer, ${ficha.nome}! 🤝\n\nQual serviço você precisa cotar hoje?\n\n*1️⃣* - Forro de Gesso\n*2️⃣* - Parede Drywall\n*3️⃣* - Sanca / Gesso 3D\n\n👉 *Digite apenas o número da opção:*`);
+        ficha.passo = 'ESPERANDO_SERVICO';
+        estadoCliente.set(chatId, ficha);
+        return;
     }
 
-    case 'AGUARDANDO_METROS_LINEARES': {
-      const valor = parseFloat(texto.replace(',', '.'));
-      if (isNaN(valor) || valor <= 0) {
-        await enviarMensagem(client, chat, `⚠️ Por favor, informe os metros lineares. Ex: _18_ ou _25.5_`);
-        break;
-      }
-      sessao.dados.metrosLineares = valor;
-      await enviarMensagem(client, chat, `🏠 Qual é o *ambiente*?\n\nEx: _Sala, Quarto, Varanda..._`);
-      sessao.estado = 'AGUARDANDO_AMBIENTE';
-      break;
-    }
-
-    case 'AGUARDANDO_AMBIENTE':
-      sessao.dados.ambiente = capitalize(texto);
-      await enviarMensagem(client, chat, menuAcabamento());
-      sessao.estado = 'AGUARDANDO_ACABAMENTO';
-      break;
-
-    case 'AGUARDANDO_ACABAMENTO': {
-      const acabamentos: Record<string, string> = {
-        '1': 'Liso (padrão)',
-        '2': 'Texturizado',
-        '3': 'Premium / Rebaixado',
-      };
-      sessao.dados.acabamento = acabamentos[texto] || capitalize(texto);
-      await enviarMensagem(
-        client,
-        chat,
-        `📍 Por último, qual é a sua *localização* (cidade/bairro)?\n\nEx: _São Paulo - SP_, _Fortaleza - CE_`
-      );
-      sessao.estado = 'AGUARDANDO_LOCALIZACAO';
-      break;
-    }
-
-    case 'AGUARDANDO_LOCALIZACAO': {
-      sessao.dados.localizacao = capitalize(texto);
-
-      // Calcular orçamento
-      const orcamento = calcularOrcamento(sessao.dados, DESCONTO_PADRAO);
-      const mensagemOrcamento = formatarOrcamento(sessao.dados, orcamento, NOME_EMPRESA);
-
-      await enviarMensagem(client, chat, `⏳ Calculando seu orçamento...`);
-      await delay(1500);
-      await enviarMensagem(client, chat, mensagemOrcamento);
-
-      // Salvar no banco
-      const prazoNum = parseInt(orcamento.prazo.split(' ')[2] || '5');
-      await salvarOrcamentoDB(
-        numero,
-        sessao.dados,
-        orcamento.subtotal,
-        orcamento.total,
-        orcamento.desconto,
-        prazoNum
-      );
-
-      sessao.estado = 'FINALIZADO';
-      break;
-    }
-
-    case 'FINALIZADO':
-      if (texto.includes('sim') || texto === 's') {
-        await enviarMensagem(
-          client,
-          chat,
-          `✅ *Ótimo! Orçamento confirmado!*\n\nNosso atendente entrará em contato em breve para agendar a visita técnica.\n\nObrigado por escolher a *${NOME_EMPRESA}*! 🏗️`
-        );
-        await resetarSessao(numero);
-        Object.assign(sessao, { estado: 'INICIO', dados: {} });
-      } else {
-        await enviarMensagem(
-          client,
-          chat,
-          `Quer fazer um *novo orçamento* ou falar com um *atendente*?\n\nDigite:\n• *novo* — para novo orçamento\n• *atendente* — para falar com humano`
-        );
-        if (texto === 'novo') {
-          await resetarSessao(numero);
-          Object.assign(sessao, { estado: 'INICIO', dados: {} });
-          await enviarMensagem(client, chat, menuPrincipal());
-          sessao.estado = 'MENU_SERVICO';
+    // PASSO 3: Captura das Medidas
+    if (ficha.passo === 'ESPERANDO_SERVICO') {
+        if (texto === '1' || texto === '2' || texto === '3') {
+            ficha.servico = texto === '1' ? 'Forro de Gesso' : texto === '2' ? 'Parede Drywall' : 'Sanca / Gesso 3D';
+            await client.sendMessage(chatId, `Excelente escolha: *${ficha.servico}*.\n\nAgora preciso saber o tamanho do local. Me diga a *Largura* e o *Comprimento* do ambiente (ex: 3x4, ou 3 por 4).`);
+            ficha.passo = 'ESPERANDO_MEDIDAS';
+            estadoCliente.set(chatId, ficha);
+        } else {
+            await client.sendMessage(chatId, `❌ Opção inválida. Por favor, digite apenas o número *1*, *2* ou *3*.`);
         }
-      }
-      break;
+        return;
+    }
 
-    default:
-      await enviarMensagem(client, chat, `👋 ${menuPrincipal()}`);
-      sessao.estado = 'MENU_SERVICO';
-  }
-}
+    // PASSO 4: Entrega do Orçamento e Tentativa de Fechamento (Gatilho de Venda)
+    if (ficha.passo === 'ESPERANDO_MEDIDAS') {
+        ficha.medidas = msg.body;
+        await client.sendMessage(chatId, `📐 Entendido! Medidas: ${ficha.medidas}.\n\n⏳ Só um instante, estou calculando os materiais e a mão de obra...`);
+        
+        setTimeout(async () => {
+            await client.sendMessage(chatId, `✅ *ORÇAMENTO PRONTO!*\n\nOlá ${ficha.nome},\nPara o serviço de *${ficha.servico}* com medidas de ${ficha.medidas}, o investimento estimado é a partir de *R$ 1.250,00*.\n\nPodemos agendar uma visita técnica sem compromisso para tirar as medidas exatas e fechar o pedido?\n\n*1* - Sim, quero agendar.\n*2* - Ainda estou pesquisando.`);
+            ficha.passo = 'ESPERANDO_FECHAMENTO';
+            estadoCliente.set(chatId, ficha);
+        }, 3000);
+        return;
+    }
 
-function capitalize(str: string): string {
-  return str
-    .split(' ')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
+    // PASSO 5: Encaminhamento Final
+    if (ficha.passo === 'ESPERANDO_FECHAMENTO') {
+        if (texto === '1' || texto.includes('sim')) {
+            await client.sendMessage(chatId, `🎉 Perfeito, ${ficha.nome}! \n\nVou repassar seus dados para um de nossos especialistas humanos. Ele vai te chamar aqui mesmo em poucos minutos para marcar a visita.\n\nObrigado pela preferência!`);
+            estadoCliente.delete(chatId);
+        } else if (texto === '2' || texto.includes('não') || texto.includes('nao')) {
+            await client.sendMessage(chatId, `Sem problemas! Agradecemos o contato. Se mudar de ideia, basta mandar um "Oi" que estaremos à disposição. Tenha um excelente dia! 👋`);
+            estadoCliente.delete(chatId);
+        } else {
+            await client.sendMessage(chatId, `Por favor, responda com *1* para Sim ou *2* para Não.`);
+        }
+        return;
+    }
 }

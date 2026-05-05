@@ -1,85 +1,166 @@
-import { Client, Message } from 'whatsapp-web.js';
+import { Client, LocalAuth } from 'whatsapp-web.js';
+import * as dotenv from 'dotenv';
+import express from 'express';
+import * as http from 'http';
+const { Server } = require('socket.io');
+import * as fs from 'fs';
+import * as path from 'path';
+import * as QRCode from 'qrcode';
+import { initDatabase } from './db/database';
+import { processarMensagem } from './bot';
+import { enfileirar } from './queue';
+import { resetarInicioBot } from './humanizer';
 
-// Memória do Bot: Guarda em qual passo do funil cada cliente está
-const estadoCliente = new Map<string, any>();
+dotenv.config();
 
-export async function processarMensagem(client: Client, msg: Message) {
-    const chatId = msg.from;
-    const texto = msg.body.toLowerCase();
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+const PORT = process.env.PORT || 3000;
 
-    // Se a mensagem for de um grupo, o bot ignora
-    if (chatId.includes('@g.us')) return;
+// Estado inicial do Bot
+let botStatus = 'desligado'; 
+let lastQr = '';
+let isBotRunning = false; 
 
-    // Recupera a ficha do cliente. Se for novo, começa no passo 'INICIO'
-    let ficha = estadoCliente.get(chatId) || { passo: 'INICIO' };
+// --- PAINEL DE CONTROLE (HTML) ---
+app.get('/', (req, res) => {
+    
+    let ledClass = 'led-desligado';
+    if (botStatus === 'online' || botStatus === 'autenticado') ledClass = 'led-online';
+    else if (botStatus === 'aguardando_qr' || botStatus === 'iniciando') ledClass = 'led-iniciando';
 
-    // ==========================================
-    // 🚀 O FUNIL DE VENDAS (SCRIPT)
-    // ==========================================
-
-    // PASSO 1: A Saudação e Captura de Nome
-    if (ficha.passo === 'INICIO') {
-        await client.sendMessage(chatId, `Olá! 👋 Sou o *GessoBot*, o assistente virtual da nossa empresa.\n\nPara eu te passar um orçamento rapidinho, como eu posso te chamar?`);
-        
-        ficha.passo = 'ESPERANDO_NOME';
-        estadoCliente.set(chatId, ficha);
-        return;
+    let qrContent = '';
+    if (botStatus === 'desligado') {
+        qrContent = '<p>💤 O robô está dormindo.<br><small>Clique em Ligar Bot para gerar o QR Code.</small></p>';
+    } else if (botStatus === 'iniciando') {
+        qrContent = '<p>⚙️ Iniciando o navegador invisível...<br><small>Aguarde um momento.</small></p>';
+    } else if (botStatus === 'aguardando_qr') {
+        qrContent = lastQr ? `<img src="${lastQr}" />` : '<p>⏳ Desenhando o QR Code...</p>';
+    } else if (botStatus === 'online' || botStatus === 'autenticado') {
+        qrContent = `
+            <div style="color: #155724;">
+                <h1 style="font-size: 3em; margin: 0;">📱</h1>
+                <h3 style="margin-top: 10px;">WhatsApp Conectado!</h3>
+                <p>O GessoBot está online e operando.</p>
+            </div>
+        `;
+    } else {
+        qrContent = '<p style="color: red;">⚠️ Sistema Desconectado.</p>';
     }
 
-    // PASSO 2: Captura do Serviço
-    if (ficha.passo === 'ESPERANDO_NOME') {
-        ficha.nome = msg.body; // Salva o nome exatamente como o cliente digitou
-        
-        await client.sendMessage(chatId, `Prazer, ${ficha.nome}! 🤝\n\nQual serviço você precisa cotar hoje?\n\n*1️⃣* - Forro de Gesso\n*2️⃣* - Parede Drywall\n*3️⃣* - Sanca / Gesso 3D\n\n👉 *Digite apenas o número da opção:*`);
-        
-        ficha.passo = 'ESPERANDO_SERVICO';
-        estadoCliente.set(chatId, ficha);
-        return;
-    }
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>M.S.E - GessoBot Panel</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; color: #333; }
+                .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: inline-block; max-width: 400px; width: 100%; }
+                #qr-container { margin: 20px 0; min-height: 250px; display: flex; align-items: center; justify-content: center; border: 2px dashed #ddd; border-radius: 10px; background: #fafafa; }
+                #qr-container img { max-width: 100%; height: auto; }
+                .status-container { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px; font-weight: bold; background: #eee; padding: 8px 15px; border-radius: 20px; width: fit-content; margin: 0 auto; text-transform: uppercase; font-size: 0.85em;}
+                .led { width: 14px; height: 14px; border-radius: 50%; display: inline-block; box-shadow: 0 0 5px rgba(0,0,0,0.2); }
+                .led-online { background-color: #28a745; box-shadow: 0 0 12px #28a745; }
+                .led-desligado { background-color: #dc3545; box-shadow: 0 0 12px #dc3545; }
+                .led-iniciando { background-color: #ffc107; box-shadow: 0 0 12px #ffc107; }
+                .btn-container { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+                button { border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.3s; font-size: 1em; }
+                .btn-start { background: #28a745; color: white; }
+                .btn-start:hover { background: #218838; }
+                .btn-reset { background: #ff4747; color: white; }
+                .btn-reset:hover { background: #d43f3f; }
+                footer { margin-top: 20px; font-size: 0.8em; color: #888; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>🛠️ GessoBot v2.0</h2>
+                <div class="status-container">
+                    <div class="led ${ledClass}"></div>
+                    <span id="status">${botStatus}</span>
+                </div>
+                <div id="qr-container">
+                    ${qrContent}
+                </div>
+                <div class="btn-container">
+                    ${botStatus === 'desligado' ? '<button class="btn-start" onclick="location.href=\'/start-bot\'">Ligar Bot (Ignição) 🚀</button>' : ''}
+                    <button class="btn-reset" onclick="confirmReset()">Resetar Conexão (Gerar novo QR) 🔄</button>
+                </div>
+            </div>
+            <footer>Marcos Software Engineer © 2026</footer>
+            <script>
+                function confirmReset() {
+                    if(confirm("Isso vai desconectar o WhatsApp atual e gerar um novo QR Code. Deseja continuar?")) {
+                        location.href = '/reset-auth';
+                    }
+                }
+                setTimeout(() => { location.reload(); }, 3000);
+            </script>
+        </body>
+        </html>
+    `);
+});
 
-    // PASSO 3: Captura das Medidas
-    if (ficha.passo === 'ESPERANDO_SERVICO') {
-        if (texto === '1' || texto === '2' || texto === '3') {
-            ficha.servico = texto === '1' ? 'Forro de Gesso' : texto === '2' ? 'Parede Drywall' : 'Sanca / Gesso 3D';
-            
-            await client.sendMessage(chatId, `Excelente escolha: *${ficha.servico}*.\n\nAgora preciso saber o tamanho do local. Me diga a *Largura* e o *Comprimento* do ambiente (ex: 3x4, ou 3 por 4).`);
-            
-            ficha.passo = 'ESPERANDO_MEDIDAS';
-            estadoCliente.set(chatId, ficha);
-        } else {
-            await client.sendMessage(chatId, `❌ Opção inválida. Por favor, digite apenas o número *1*, *2* ou *3*.`);
-        }
-        return;
-    }
+// --- ROTA DE IGNIÇÃO E RESET ---
+app.get('/start-bot', (req, res) => {
+    if (!isBotRunning) iniciarBot(); 
+    res.redirect('/'); 
+});
 
-    // PASSO 4: Entrega do Orçamento e Tentativa de Fechamento (Gatilho de Venda)
-    if (ficha.passo === 'ESPERANDO_MEDIDAS') {
-        ficha.medidas = msg.body;
-        
-        await client.sendMessage(chatId, `📐 Entendido! Medidas: ${ficha.medidas}.\n\n⏳ Só um instante, estou calculando os materiais e a mão de obra...`);
-        
-        // Simula o bot "pensando" por 3 segundos para parecer mais humano
-        setTimeout(async () => {
-            await client.sendMessage(chatId, `✅ *ORÇAMENTO PRONTO!*\n\nOlá ${ficha.nome},\nPara o serviço de *${ficha.servico}* com medidas de ${ficha.medidas}, o investimento estimado é a partir de *R$ 1.250,00*.\n\n*(Este valor já inclui material de primeira linha e mão de obra especializada)*.\n\nPodemos agendar uma visita técnica sem compromisso para tirar as medidas exatas e fechar o pedido?\n\n*1* - Sim, quero agendar.\n*2* - Ainda estou pesquisando.`);
-            
-            ficha.passo = 'ESPERANDO_FECHAMENTO';
-            estadoCliente.set(chatId, ficha);
-        }, 3000);
-        return;
-    }
+app.get('/reset-auth', (req, res) => {
+    const sessionPath = path.join(__dirname, '../.wwebjs_auth');
+    try {
+        if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true, force: true });
+        res.send(`
+            <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #f4f4f9;">
+                <h1 style="color: #ff9800;">🔄 Resetando o Sistema...</h1>
+                <p>A sessão antiga foi limpa com sucesso.</p>
+                <script>setTimeout(() => { window.location.href = '/start-bot'; }, 6000);</script>
+            </body>
+        `);
+        setTimeout(() => process.exit(1), 2000); 
+    } catch (err) { res.status(500).send('Erro ao resetar: ' + err); }
+});
 
-    // PASSO 5: Encaminhamento Final
-    if (ficha.passo === 'ESPERANDO_FECHAMENTO') {
-        if (texto === '1' || texto.includes('sim')) {
-            await client.sendMessage(chatId, `🎉 Perfeito, ${ficha.nome}! \n\nVou repassar seus dados para um de nossos especialistas humanos. Ele vai te chamar aqui mesmo em poucos minutos para marcar a visita.\n\nObrigado pela preferência!`);
-            // Aqui o bot finaliza o atendimento. A ficha é apagada para ele poder começar de novo no futuro se quiser.
-            estadoCliente.delete(chatId);
-        } else if (texto === '2' || texto.includes('não') || texto.includes('nao')) {
-            await client.sendMessage(chatId, `Sem problemas! Agradecemos o contato. Se mudar de ideia, basta mandar um "Oi" que estaremos à disposição. Tenha um excelente dia! 👋`);
-            estadoCliente.delete(chatId);
-        } else {
-            await client.sendMessage(chatId, `Por favor, responda com *1* para Sim ou *2* para Não.`);
-        }
-        return;
-    }
+server.listen(PORT, () => { console.log(`🌐 Painel GessoBot rodando em http://localhost:${PORT}`); });
+
+async function criarCliente(): Promise<Client> {
+    return new Client({
+        authStrategy: new LocalAuth({ clientId: 'gessobot' }),
+        puppeteer: {
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--disable-gpu', '--no-first-run', '--no-zygote', '--single-process'],
+        },
+    });
 }
+
+async function iniciarBot(): Promise<void> {
+    isBotRunning = true;
+    botStatus = 'iniciando';
+    await initDatabase();
+    resetarInicioBot();
+
+    const client = await criarCliente();
+
+    client.on('qr', async (qr) => {
+        botStatus = 'aguardando_qr';
+        const qrImage = await QRCode.toDataURL(qr);
+        lastQr = qrImage; 
+    });
+
+    client.on('authenticated', () => { botStatus = 'autenticado'; lastQr = ''; });
+    client.on('ready', () => { botStatus = 'online'; });
+    
+    client.on('message', async (msg) => {
+        try { await enfileirar(client, msg, processarMensagem); } 
+        catch (err) { console.error('❌ Erro na fila:', err); }
+    });
+
+    client.on('disconnected', () => { botStatus = 'desconectado'; lastQr = ''; isBotRunning = false; setTimeout(() => process.exit(1), 5000); });
+    
+    try { await client.initialize(); } 
+    catch (err) { isBotRunning = false; setTimeout(() => process.exit(1), 10000); }
+}
+
