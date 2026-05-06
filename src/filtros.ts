@@ -7,6 +7,7 @@
  * - Broadcasts (listas de transmissão)
  * - Mensagens do próprio bot
  * - Mensagens de sistema
+ * - Mensagens suspeitas/Anti-bot (NOVO)
  */
 
 import { Message, Chat } from 'whatsapp-web.js';
@@ -68,6 +69,12 @@ export async function aplicarFiltros(msg: Message): Promise<ResultadoFiltro> {
   const idsistema = ['@broadcast', '@newsletter', 'status@broadcast', 'broadcast'];
   if (idsistema.some((s) => msg.from.includes(s))) {
     return { bloqueado: true, motivo: 'ID de sistema' };
+  }
+
+  // 10. ANTI-BOT: Permitir apenas contatos padrão (@c.us) e dispositivos vinculados (@lid)
+  const isAuthorizedSender = msg.from.endsWith('@c.us') || msg.from.endsWith('@lid');
+  if (!isAuthorizedSender) {
+    return { bloqueado: true, motivo: 'mensagem suspeita' };
   }
 
   return { bloqueado: false };
