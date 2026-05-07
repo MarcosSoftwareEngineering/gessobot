@@ -110,7 +110,7 @@ app.get('/', (req, res) => {
             .badge { display: inline-block; background: #dc3545; color: white; font-size: 0.7em; padding: 2px 8px; border-radius: 20px; margin-left: 8px; vertical-align: middle; }
         </style></head><body>
             <div class="card">
-                <h2>🛠️ GessoBot v2.0 <span class="badge">🛡️ Anti-Ban</span></h2>
+                <h2>🛠️ Marcos Software Engineer <br> GessoBot v2.0 <span class="badge">🛡️ Anti-Ban</span></h2>
                 <div class="status-container"><div class="led ${ledClass}"></div><span>${botStatus}</span></div>
                 <div id="qr-container">${qrContent}</div>
                 <div class="btn-container">
@@ -137,10 +137,15 @@ app.get('/reset-auth', (req, res) => {
     } catch (err) { res.status(500).send('Erro: ' + err); }
 });
 
-server.listen(PORT, () => { console.log(`🌐 Painel GessoBot rodando em http://localhost:${PORT}`); });
+// ==========================================
+// 🌍 LIBERAÇÃO DE REDE EXTERNA (Ajuste para o Render e Celulares)
+// ==========================================
+server.listen(PORT as number, '0.0.0.0', () => { 
+    console.log(`🌐 Painel GessoBot rodando na porta ${PORT} e acessível de qualquer dispositivo!`); 
+});
 
 // ==========================================
-// 🚀 INICIALIZAÇÃO OTIMIZADA (Koyeb / Docker)
+// 🚀 INICIALIZAÇÃO OTIMIZADA (Docker / Render)
 // ==========================================
 async function criarCliente(): Promise<Client> {
     const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
