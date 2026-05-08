@@ -1,79 +1,66 @@
 /**
- * filtros.ts
- * Filtra mensagens que o bot NÃO deve responder:
- * - Grupos do WhatsApp
- * - Canais do WhatsApp
- * - Status / Stories
- * - Broadcasts (listas de transmissão)
- * - Mensagens do próprio bot
- * - Mensagens de sistema
- * - Mensagens suspeitas/Anti-bot (NOVO)
+ * filtros.ts - Adaptado para @whiskeysockets/baileys
  */
 
-import { Message, Chat } from 'whatsapp-web.js';
+import { proto, WASocket } from '@whiskeysockets/baileys';
 
 export interface ResultadoFiltro {
   bloqueado: boolean;
   motivo?: string;
 }
 
-export async function aplicarFiltros(msg: Message): Promise<ResultadoFiltro> {
+export async function aplicarFiltros(
+  msg: proto.IWebMessageInfo,
+  sock: WASocket
+): Promise<ResultadoFiltro> {
+  
+  const remoteJid = msg.key?.remoteJid || '';
+  const fromMe = msg.key?.fromMe ?? false;
+
   // 1. Ignorar mensagens do próprio bot
-  if (msg.fromMe) {
+  if (fromMe) {
     return { bloqueado: true, motivo: 'mensagem própria' };
   }
 
-  // 2. Ignorar status/stories do WhatsApp
-  if (msg.from === 'status@broadcast') {
+  // 2. Ignorar status/stories
+  if (remoteJid === 'status@broadcast') {
     return { bloqueado: true, motivo: 'status/story' };
   }
 
-  // 3. Ignorar broadcasts (listas de transmissão)
-  if (msg.broadcast) {
-    return { bloqueado: true, motivo: 'broadcast' };
-  }
-
-  // 4. Ignorar mensagens de sistema (sem corpo)
-  if (!msg.body || msg.body.trim() === '') {
-    // Permite apenas se for sticker ou imagem com legenda — mas para bot de orçamento, ignora
-    if (!msg.hasMedia) {
-      return { bloqueado: true, motivo: 'mensagem vazia' };
-    }
-  }
-
-  // 5. Verificar o chat para grupos e canais
-  let chat: Chat;
-  try {
-    chat = await msg.getChat();
-  } catch {
-    return { bloqueado: true, motivo: 'erro ao obter chat' };
-  }
-
-  // 6. Ignorar grupos
-  if (chat.isGroup) {
+  // 3. Ignorar grupos
+  if (remoteJid.endsWith('@g.us')) {
     return { bloqueado: true, motivo: 'grupo' };
   }
 
-  // 7. Ignorar canais do WhatsApp (newsletter)
-  // @ts-ignore - isChannel pode não estar nos tipos mas existe na API
-  if (chat.isChannel || chat.isNewsletter || msg.from.includes('@newsletter')) {
+  // 4. Ignorar canais/newsletters
+  if (remoteJid.endsWith('@newsletter') || remoteJid.includes('@newsletter')) {
     return { bloqueado: true, motivo: 'canal' };
   }
 
-  // 8. Ignorar chats arquivados ou silenciados de sistema
-  if (msg.from.includes('@g.us')) {
-    return { bloqueado: true, motivo: 'grupo (by ID)' };
+  // 5. Ignorar broadcasts
+  if (remoteJid.includes('@broadcast')) {
+    return { bloqueado: true, motivo: 'broadcast' };
   }
 
-  // 9. Ignorar IDs de sistema do WhatsApp
-  const idsistema = ['@broadcast', '@newsletter', 'status@broadcast', 'broadcast'];
-  if (idsistema.some((s) => msg.from.includes(s))) {
-    return { bloqueado: true, motivo: 'ID de sistema' };
+  // 6. Ignorar mensagens vazias
+  const body = msg.message?.conversation 
+    || msg.message?.extendedTextMessage?.text 
+    || '';
+  const hasMedia = !!(
+    msg.message?.imageMessage ||
+    msg.message?.videoMessage ||
+    msg.message?.audioMessage ||
+    msg.message?.documentMessage ||
+    msg.message?.stickerMessage
+  );
+
+  if (!body.trim() && !hasMedia) {
+    return { bloqueado: true, motivo: 'mensagem vazia' };
   }
 
-  // 10. ANTI-BOT: Permitir apenas contatos padrão (@c.us) e dispositivos vinculados (@lid)
-  const isAuthorizedSender = msg.from.endsWith('@c.us') || msg.from.endsWith('@lid');
-  if (!isAuthorizedSender) {
+  // 7. Permitir apenas contatos padrão
+  const isAuthorized = remoteJid.endsWith('@s.whatsapp.net') || remoteJid.endsWith('@lid');
+  if (!isAuthorized) {
     return { bloqueado: true, motivo: 'mensagem suspeita' };
   }
 
