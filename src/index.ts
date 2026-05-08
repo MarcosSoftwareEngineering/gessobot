@@ -96,7 +96,7 @@ app.get('/', (req, res) => {
                 <div id="qr-container">${qrContent}</div>
                 <div class="btn-container">
                     ${botStatus === 'desligado' ? '<button class="btn-start" onclick="location.href=\'/start-bot\'">Ligar Bot 🚀</button>' : ''}
-                    <button class="btn-reset" onclick="if(confirm('Resetar sessão?')) location.href='/reset-auth';">Resetar Conexão 🔄</button>
+                    <button class="btn-reset" onclick="if(confirm(\'Resetar sessão?\')) location.href=\'/reset-auth\';">Resetar Conexão 🔄</button>
                 </div>
             </div>
             <script>setTimeout(() => { location.reload(); }, 4000);</script>
@@ -137,16 +137,14 @@ async function iniciarBot() {
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: 'silent' }), // Remove logs excessivos
+        logger: pino({ level: 'silent' }),
         browser: ['GessoBot (Marcos SE)', 'Chrome', '1.0.0']
     });
 
     clienteAtual = sock;
 
-    // Salva credenciais automaticamente
     sock.ev.on('creds.update', saveCreds);
 
-    // Gerencia a conexão e o QR Code
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
@@ -162,7 +160,7 @@ async function iniciarBot() {
             
             if (shouldReconnect) {
                 botStatus = 'reconectando';
-                setTimeout(iniciarBot, 5000); // Tenta reconectar em 5s
+                setTimeout(iniciarBot, 5000);
             } else {
                 botStatus = 'desconectado';
                 isBotRunning = false;
@@ -177,21 +175,20 @@ async function iniciarBot() {
         }
     });
 
-    // Escuta novas mensagens
+    // ✅ Escuta e processa novas mensagens
     sock.ev.on('messages.upsert', async (m) => {
-        if (m.type !== 'notify') return; // Ignora mensagens de histórico antigo
+        if (m.type !== 'notify') return;
         
         const msg = m.messages[0];
         if (!msg.message) return;
-        if (msg.key.fromMe) return; // Ignora as próprias mensagens
+        if (msg.key.fromMe) return;
 
         const remoteJid = msg.key.remoteJid;
         if (!mensagemPermitida(remoteJid)) return;
 
         console.log(`📩 Nova mensagem recebida de: ${remoteJid}`);
         
-        // ⚠️ ATENÇÃO: Deixei comentado de propósito para o VS Code não gritar erro agora.
-        // try { await enfileirar(sock, msg, processarMensagem); }
-        // catch (err) { console.error('❌ Erro na fila:', err); }
+        try { await enfileirar(sock, msg, processarMensagem); }
+        catch (err) { console.error('❌ Erro na fila:', err); }
     });
 }
