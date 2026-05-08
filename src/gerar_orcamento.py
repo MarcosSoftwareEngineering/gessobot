@@ -1,8 +1,3 @@
-"""
-gerar_orcamento.py
-Gera PDF profissional de orçamento para Tavares Gesso
-"""
-
 import os
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
@@ -18,6 +13,8 @@ from reportlab.platypus import Flowable
 from reportlab.lib.colors import HexColor
 from PIL import Image as PILImage
 import io
+import sys
+import json
 
 # ── Paleta de cores ──────────────────────────────────────────
 AZUL_ESCURO  = HexColor("#0D2B6E")
@@ -63,7 +60,6 @@ def estilos():
             textColor=CINZA_MEDIO, alignment=TA_LEFT, leading=12),
     }
 
-
 class LinhaColorida(Flowable):
     """Linha horizontal colorida personalizada."""
     def __init__(self, cor, espessura=2, largura=None):
@@ -78,7 +74,6 @@ class LinhaColorida(Flowable):
         self.canv.setStrokeColor(self.cor)
         self.canv.setLineWidth(self.espessura)
         self.canv.line(0, self.espessura/2, w, self.espessura/2)
-
 
 def cortar_circular(img_path, tamanho=180):
     """Recorta imagem em círculo para logo."""
@@ -95,28 +90,7 @@ def cortar_circular(img_path, tamanho=180):
     buf.seek(0)
     return buf
 
-
 def gerar_pdf(dados: dict, output_path: str):
-    """
-    dados = {
-        "nome": "João Silva",
-        "telefone": "71 99999-9999",
-        "servico": "Forro de Gesso Liso",
-        "metragem": 25,
-        "ambiente": "Sala de estar",
-        "acabamento": "Padrão",
-        "localizacao": "Lauro de Freitas - BA",
-        "subtotal": 1625.0,
-        "desconto": 5,
-        "valor_desconto": 81.25,
-        "total": 1543.75,
-        "prazo": "3 a 5 dias úteis",
-        "itens": [
-            {"descricao": "Mão de obra - Forro Liso", "qtd": 25, "un": "m²", "unit": 47.0, "total": 1175.0},
-            {"descricao": "Material (gesso, perfis)", "qtd": 1, "un": "kit", "unit": 450.0, "total": 450.0},
-        ]
-    }
-    """
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
@@ -126,12 +100,12 @@ def gerar_pdf(dados: dict, output_path: str):
 
     st = estilos()
     story = []
-    W = A4[0] - 3.6*cm  # largura útil
+    W = A4[0] - 3.6*cm  
 
     # ════════════════════════════════════════
     # CABEÇALHO com gradiente simulado
     # ════════════════════════════════════════
-    logo_buf = cortar_circular("logo.png", 130)
+    logo_buf = cortar_circular("src/assets/Tavares_Gesso.jpeg", 130) # CAMINHO CORRIGIDO
     logo_img = Image(logo_buf, width=3.2*cm, height=3.2*cm)
 
     header_data = [[
@@ -338,7 +312,7 @@ def gerar_pdf(dados: dict, output_path: str):
     story.append(LinhaColorida(AZUL_MEDIO, 1.5, W))
     story.append(Spacer(1, 8))
 
-    portfolio_img = Image("portfolio.jpeg", width=W, height=7*cm)
+    portfolio_img = Image("src/assets/Elson.jpeg", width=W, height=7*cm) # CAMINHO CORRIGIDO
     portfolio_img.hAlign = "CENTER"
     story.append(portfolio_img)
     story.append(Spacer(1, 6))
@@ -411,25 +385,20 @@ def gerar_pdf(dados: dict, output_path: str):
     print(f"✅ PDF gerado: {output_path}")
 
 
-# ── TESTE ────────────────────────────────────────────────────
+# ── EXECUÇÃO VIA NODE ────────────────────────────────────────
 if __name__ == "__main__":
-    dados_teste = {
-        "nome": "Carlos Andrade",
-        "telefone": "71 98765-4321",
-        "servico": "Forro de Gesso Liso",
-        "metragem": 30,
-        "ambiente": "Sala de Estar",
-        "acabamento": "Premium",
-        "localizacao": "Lauro de Freitas - BA",
-        "subtotal": 2175.0,
-        "desconto": 5,
-        "valor_desconto": 108.75,
-        "total": 2066.25,
-        "prazo": "3 a 5 dias úteis",
-        "itens": [
-            {"descricao": "Mão de obra — Forro de Gesso Liso", "qtd": 30, "un": "m²", "unit": 47.0, "total": 1410.0},
-            {"descricao": "Material (gesso, perfis, buchas e pregos)", "qtd": 1, "un": "kit", "unit": 445.0, "total": 445.0},
-            {"descricao": "Arremate e acabamento fino", "qtd": 1, "un": "svc", "unit": 320.0, "total": 320.0},
-        ]
-    }
-    gerar_pdf(dados_teste, "/home/claude/orcamento_teste.pdf")
+    if len(sys.argv) > 2:
+        json_path = sys.argv[1]
+        output_path = sys.argv[2]
+        
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                dados_cliente = json.load(f)
+                
+            gerar_pdf(dados_cliente, output_path)
+        except Exception as e:
+            print(f"Erro interno no Python: {e}")
+            sys.exit(1) # Avisa o Node que deu erro
+    else:
+        print("Erro: Faltam os caminhos do JSON e do PDF.")
+        sys.exit(1)
