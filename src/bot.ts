@@ -1,11 +1,9 @@
 import { WASocket, proto } from '@whiskeysockets/baileys';
 import { pausaLeitura, pausaEntresMensagens, getMultiplicadorWarmup } from './humanizer';
-// IMPORTANTE: Importar a função que criamos no arquivo orcamento
 import { gerarEEnviarPdf } from './orcamento';
 
-// Memória do Bot e Memória de Silêncio
+// Memória do Bot
 const estadoCliente = new Map<string, any>();
-const cooldowns = new Map<string, number>(); // Guarda o timestamp de liberação
 
 function extrairTexto(msg: proto.IWebMessageInfo): string {
     return msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
@@ -40,18 +38,6 @@ export async function processarMensagem(sock: WASocket, msg: proto.IWebMessageIn
     const chatId = msg.key.remoteJid;
     if (!chatId || deveIgnorar(chatId)) return;
 
-    // 🛡️ FILTRO DE SILÊNCIO (7 DIAS)
-    const agora = Date.now();
-    if (cooldowns.has(chatId)) {
-        const liberacao = cooldowns.get(chatId)!;
-        if (agora < liberacao) {
-            // Ainda está no período de silêncio, ignora silenciosamente
-            return;
-        } else {
-            cooldowns.delete(chatId); // Período acabou, limpa o registro
-        }
-    }
-
     const body = extrairTexto(msg);
     const texto = body.toLowerCase().trim();
 
@@ -76,7 +62,7 @@ export async function processarMensagem(sock: WASocket, msg: proto.IWebMessageIn
         return;
     }
 
-    // PASSO 3: Captura do Serviço (Mapeado para os tipos da calculadora)
+    // PASSO 3: Captura do Serviço 
     if (ficha.passo === 'ESPERANDO_SERVICO') {
         const mapa: any = { '1': 'forro_liso', '2': 'drywall', '3': 'gesso_3d' };
         if (mapa[texto]) {
@@ -92,13 +78,12 @@ export async function processarMensagem(sock: WASocket, msg: proto.IWebMessageIn
 
     // PASSO 4: Orçamento com PDF
     if (ficha.passo === 'ESPERANDO_MEDIDAS') {
-        // Tenta extrair metragem aproximada (ex: 3x4 vira 12)
         const partes = texto.match(/\d+/g);
         if (partes && partes.length >= 2) {
             ficha.metragem = parseFloat(partes[0]) * parseFloat(partes[1]);
             ficha.ambiente = body;
         } else {
-            ficha.metragem = 20; // Default caso não entenda
+            ficha.metragem = 20; 
         }
 
         // CHAMA A FUNÇÃO QUE GERA O PDF E ENVIA
@@ -109,23 +94,16 @@ export async function processarMensagem(sock: WASocket, msg: proto.IWebMessageIn
         return;
     }
 
-    // PASSO 5: Fechamento e Ativação do Silêncio
+    // PASSO 5: Fechamento (Livre de bloqueios)
     if (ficha.passo === 'ESPERANDO_FECHAMENTO') {
-        const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000;
-        
         if (texto === '1' || texto.includes('sim')) {
             await enviar(sock, chatId, `🎉 Perfeito, ${ficha.nome}!\n\nVou repassar seus dados para um especialista. Ele te chamará em breve.\n\nObrigado!`, body);
-            
-            // Ativa o silêncio de 7 dias
-            cooldowns.set(chatId, Date.now() + SETE_DIAS_MS);
-            estadoCliente.delete(chatId);
+            estadoCliente.delete(chatId); // Apenas reseta a ficha
 
         } else if (texto === '2' || texto.includes('não') || texto.includes('nao')) {
             await enviar(sock, chatId, `Sem problemas! Agradecemos o contato. Tenha um excelente dia! 👋`, body);
+            estadoCliente.delete(chatId); // Apenas reseta a ficha
             
-            // Ativa o silêncio de 7 dias também aqui para não ser chato
-            cooldowns.set(chatId, Date.now() + SETE_DIAS_MS);
-            estadoCliente.delete(chatId);
         } else {
             await enviar(sock, chatId, `Por favor, responda com *1* para Sim ou *2* para Não.`, body);
         }
