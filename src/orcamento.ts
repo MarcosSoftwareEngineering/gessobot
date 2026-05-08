@@ -1,3 +1,6 @@
+import { exec } from 'child_process';
+import path from 'path';
+import fs from 'fs';
 import { TipoServico, DadosSessao, Orcamento, ItemOrcamento, TabelaPrecos } from './types';
 
 const TABELA_PRECOS: Record<TipoServico, TabelaPrecos> = {
@@ -30,7 +33,7 @@ const TABELA_PRECOS: Record<TipoServico, TabelaPrecos> = {
   },
 };
 
-const NOMES_SERVICO: Record<TipoServico, string> = {
+export const NOMES_SERVICO: Record<TipoServico, string> = {
   forro_liso: 'Forro de Gesso Liso',
   gesso_parede: 'Gesso em Parede',
   sancas_molduras: 'Sancas e Molduras',
@@ -85,7 +88,6 @@ export function calcularOrcamento(dados: DadosSessao, descontoPct: number = 5): 
     );
   }
 
-  // Arremate e acabamento
   if (precos.acabamento > 0) {
     itens.push({
       descricao: 'Arremate e acabamento',
@@ -117,7 +119,7 @@ export function formatarOrcamento(dados: DadosSessao, orcamento: Orcamento, nome
     return `*${num}.* ${item.descricao}\n     ${item.quantidade} ${item.unidade} × R$ ${item.valorUnitario.toFixed(2)} = *R$ ${item.valorTotal.toFixed(2)}*`;
   });
 
-  return `✅ *Olá, ${dados.nome}! Aqui está seu orçamento:*
+  return `✅ *Olá, ${dados.nome}! Aqui está o seu orçamento:*
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🏗️ *${servico}*
@@ -141,4 +143,64 @@ ${linhasItens.join('\n\n')}
 Para confirmar ou tirar dúvidas, responda *SIM* ou *FALAR COM ATENDENTE*.
 
 _${nomeEmpresa}_`;
+}
+
+// ============================================================================
+// NOVA FUNÇÃO: GERAÇÃO E ENVIO DO PDF
+// ============================================================================
+export async function gerarEEnviarPdf(sock: any, numeroDoCliente: string, dadosSessaoDoCliente: DadosSessao) {
+    const orcamentoCalculado = calcularOrcamento(dadosSessaoDoCliente);
+    
+    // CORREÇÃO APLICADA: Limpeza do número movida para o topo da função
+    const numeroLimpo = numeroDoCliente.split('@')[0];
+
+    const dadosParaPython = {
+        nome: dadosSessaoDoCliente.nome || "Cliente",
+        telefone: numeroLimpo, // CORREÇÃO APLICADA: Usando numeroLimpo em vez da sessão
+        servico: NOMES_SERVICO[dadosSessaoDoCliente.servico!],
+        metragem: dadosSessaoDoCliente.metragem,
+        ambiente: dadosSessaoDoCliente.ambiente || "Não informado",
+        acabamento: dadosSessaoDoCliente.acabamento || "Padrão",
+        localizacao: dadosSessaoDoCliente.localizacao || "Não informada",
+        subtotal: orcamentoCalculado.subtotal,
+        desconto: orcamentoCalculado.desconto,
+        valor_desconto: orcamentoCalculado.valorDesconto,
+        total: orcamentoCalculado.total,
+        prazo: orcamentoCalculado.prazo,
+        itens: orcamentoCalculado.itens.map(item => ({
+            descricao: item.descricao,
+            qtd: item.quantidade,
+            un: item.unidade,
+            unit: item.valorUnitario,
+            total: item.valorTotal
+        }))
+    };
+
+    const pdfPath = path.join(__dirname, `orcamento_${numeroLimpo}.pdf`);
+    const dadosJsonPath = path.join(__dirname, `dados_${numeroLimpo}.json`);
+
+    fs.writeFileSync(dadosJsonPath, JSON.stringify(dadosParaPython));
+
+    await sock.sendMessage(numeroDoCliente, { text: "⏳ Só um instante, estou a calcular os materiais e a preparar o seu PDF..." });
+
+    exec(`python3 src/gerar_orcamento.py ${dadosJsonPath} ${pdfPath}`, async (error, stdout, stderr) => {
+        if (fs.existsSync(dadosJsonPath)) fs.unlinkSync(dadosJsonPath);
+
+        if (error) {
+            console.error(`Erro ao gerar PDF: ${error.message}`);
+            await sock.sendMessage(numeroDoCliente, { text: "Poxa, ocorreu um erro ao gerar o seu PDF. A nossa equipa técnica já foi avisada!" });
+            return;
+        }
+
+        if (fs.existsSync(pdfPath)) {
+            await sock.sendMessage(numeroDoCliente, { 
+                document: { url: pdfPath }, 
+                mimetype: 'application/pdf', 
+                fileName: `Orcamento_Tavares_Gesso.pdf`,
+                caption: `✅ *ORÇAMENTO PRONTO!*\n\nOlá, ${dadosParaPython.nome}!\nAqui está o seu orçamento detalhado em PDF.\n\nPodemos agendar uma visita técnica sem compromisso para tirar as medidas exatas e fechar o pedido?\n\n1 - Sim, quero agendar.\n2 - Ainda estou a pesquisar.` 
+            });
+
+            fs.unlinkSync(pdfPath); 
+        }
+    });
 }
