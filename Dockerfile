@@ -1,29 +1,23 @@
 FROM node:20-slim
 
-# Instalar dependências do Puppeteer/Chromium
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-freefont-ttf \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
-# Variável do Chromium para o Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
 WORKDIR /app
 
-# Copiar e instalar dependências
+# 1. Copiar apenas os arquivos de configuração primeiro
 COPY package*.json ./
-RUN npm ci --omit=dev
 
-# Copiar código fonte e compilar
+# 2. Instalar TODAS as dependências (isso inclui o TypeScript para o build não falhar)
+RUN npm install
+
+# 3. Copiar o restante do código do projeto
 COPY . .
+
+# 4. Compilar o código TypeScript (agora o comando tsc vai ser encontrado!)
 RUN npm run build
 
-# Pasta de autenticação do WhatsApp
-RUN mkdir -p .wwebjs_auth .wwebjs_cache
+# 5. Limpar as dependências de desenvolvimento para deixar a imagem final mais leve
+RUN npm prune --production
 
 EXPOSE 3000
 
+# 6. Iniciar o servidor
 CMD ["node", "dist/index.js"]
