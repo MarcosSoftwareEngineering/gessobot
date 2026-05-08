@@ -1,10 +1,12 @@
 /**
  * humanizer.ts
- * Simula comportamento humano realista no WhatsApp
+ * Simula comportamento humano realista no WhatsApp (Motor Baileys)
  * - Delay proporcional ao tamanho da mensagem
  * - Pausa de "leitura" antes de responder
  * - Variação aleatória para parecer natural
  */
+
+import { WASocket } from '@whiskeysockets/baileys';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,15 +25,19 @@ export async function pausaLeitura(textoRecebido: string): Promise<void> {
 }
 
 /**
- * Simula digitação proporcional ao tamanho da resposta
+ * Simula digitação proporcional ao tamanho da resposta direto via Socket
  */
-export async function simulaDigitacao(chat: any, textoResposta: string): Promise<void> {
+export async function simulaDigitacao(sock: WASocket, chatId: string, textoResposta: string): Promise<void> {
   const chars = textoResposta.length;
   // ~150 chars por segundo de digitação, mínimo 1s, máximo 5s
   const tempoDigitacao = Math.min(5000, Math.max(1000, chars * 6.5));
 
-  await chat.sendStateTyping();
+  await sock.presenceSubscribe(chatId);
+  await sock.sendPresenceUpdate('composing', chatId);
+  
   await delay(jitter(tempoDigitacao, 800));
+  
+  await sock.sendPresenceUpdate('paused', chatId);
 }
 
 /**
@@ -49,7 +55,7 @@ export function getMultiplicadorWarmup(): number {
   const horasAtivo = getHorasAtivo();
   if (horasAtivo < 24) return 2.5;   // primeiras 24h: respostas mais lentas
   if (horasAtivo < 72) return 1.5;   // 24-72h: moderado
-  return 1.0;                         // após 3 dias: normal
+  return 1.0;                        // após 3 dias: normal
 }
 
 let inicioBot = Date.now();
