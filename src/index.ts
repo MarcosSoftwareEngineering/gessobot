@@ -91,7 +91,6 @@ app.get('/', (req, res) => {
 
     res.send(`
         <!DOCTYPE html>
-<<<<<<< HEAD
         <html lang="pt-BR">
         <head>
             <meta charset="UTF-8">
@@ -156,33 +155,6 @@ app.get('/', (req, res) => {
                 <div class="button-group">
                     ${actionButtons}
                     <button class="btn btn-reset" onclick="if(confirm('Resetar sessão?')) location.href='/reset-auth';">Resetar Conexão 🔄</button>
-=======
-        <html><head><title>M.S.E - GessoBot Panel</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }
-            .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: inline-block; max-width: 400px; width: 100%; }
-            #qr-container { margin: 20px 0; min-height: 250px; display: flex; align-items: center; justify-content: center; border: 2px dashed #ddd; border-radius: 10px; background: #fafafa; flex-direction: column; }
-            #qr-container img { max-width: 100%; }
-            .status-container { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px; font-weight: bold; background: #eee; padding: 8px 15px; border-radius: 20px; text-transform: uppercase; font-size: 0.85em; }
-            .led { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
-            .led-online { background-color: #28a745; box-shadow: 0 0 12px #28a745; }
-            .led-desligado { background-color: #dc3545; box-shadow: 0 0 12px #dc3545; }
-            .led-iniciando { background-color: #ffc107; box-shadow: 0 0 12px #ffc107; }
-            .btn-container { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-            button { border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 1em; }
-            .btn-start { background: #28a745; color: white; }
-            .btn-reset { background: #ff4747; color: white; }
-            .badge { display: inline-block; background: #007bff; color: white; font-size: 0.7em; padding: 2px 8px; border-radius: 20px; margin-left: 8px; vertical-align: middle; }
-        </style></head><body>
-            <div class="card">
-                <h2>🛠️ Marcos Software Engineer <br> GessoBot v3.0 <span class="badge">🚀 Motor Baileys</span></h2>
-                <div class="status-container"><div class="led ${ledClass}"></div><span>${botStatus}</span></div>
-                <div id="qr-container">${qrContent}</div>
-                <div class="btn-container">
-                    ${botStatus === 'desligado' ? '<button class="btn-start" onclick="location.href=\'/start-bot\'">Ligar Bot 🚀</button>' : ''}
-                    <button class="btn-reset" onclick="if(confirm(\'Resetar sessão?\')) location.href=\'/reset-auth\';">Resetar Conexão 🔄</button>
->>>>>>> b12692c0b116399544d6ff73f071c20bf7bee215
                 </div>
             </div>
 
