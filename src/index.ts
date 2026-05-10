@@ -55,52 +55,120 @@ function mensagemPermitida(remoteJid: string | null | undefined): boolean {
     return true;
 }
 
-// --- PAINEL DE CONTROLE ---
+// ==========================================
+// --- PAINEL DE CONTROLE M.S.E ---
+// ==========================================
 app.get('/', (req, res) => {
-    let ledClass = 'led-desligado';
-    if (botStatus === 'online') ledClass = 'led-online';
-    else if (['aguardando_qr', 'iniciando', 'reconectando'].includes(botStatus)) ledClass = 'led-iniciando';
+    // Configura os textos dinâmicos do status
+    let statusTextLabel = 'DESLIGADO';
+    let ledColor = '#dc2626'; // Vermelho
+    let qrContent = '<p>💤 O robô está dormindo.<br><small>Clique em Ligar Bot.</small></p>';
+    let actionButtons = '';
 
-    let qrContent = '';
-    if (botStatus === 'desligado') qrContent = '<p>💤 O robô está dormindo.<br><small>Clique em Ligar Bot.</small></p>';
-    else if (botStatus === 'iniciando') qrContent = '<p>⚙️ Iniciando o motor Baileys (ultra-leve)...</p>';
-    else if (botStatus === 'aguardando_qr') qrContent = lastQr 
-        ? `<div><img src="${lastQr}" /><p style="color:#856404;font-size:0.85em">⚠️ Escaneie o QR Code.</p></div>` 
-        : '<p>⏳ Desenhando QR Code...</p>';
-    else if (botStatus === 'online') qrContent = `<div style="color:#155724"><h1 style="font-size:3em;margin:0">📱</h1><h3>Conectado!</h3></div>`;
-    else qrContent = '<p style="color:red">⚠️ Desconectado.</p>';
+    if (botStatus === 'online') {
+        statusTextLabel = 'CONECTADO';
+        ledColor = '#16a34a'; // Verde
+        qrContent = `<div style="color:#155724"><h1 style="font-size:3em;margin:0">📱</h1><h3>Conectado!</h3></div>`;
+    } else if (botStatus === 'aguardando_qr') {
+        statusTextLabel = 'AGUARDANDO QR';
+        ledColor = '#eab308'; // Amarelo
+        qrContent = lastQr 
+            ? `<div><img src="${lastQr}" style="border-radius:10px; max-width:200px;"/><p style="color:#856404;font-size:0.85rem">⚠️ Escaneie o QR Code.</p></div>` 
+            : '<p>⏳ Desenhando QR Code...</p>';
+    } else if (botStatus === 'iniciando') {
+        statusTextLabel = 'INICIANDO MOTOR';
+        ledColor = '#eab308'; // Amarelo
+        qrContent = '<p>⚙️ Iniciando o motor Baileys (ultra-leve)...</p>';
+    } else if (botStatus === 'reconectando') {
+        statusTextLabel = 'RECONECTANDO';
+        ledColor = '#eab308'; // Amarelo
+        qrContent = '<p>🔄 Tentando reconectar ao WhatsApp...</p>';
+    }
+
+    if (botStatus === 'desligado' || !isBotRunning) {
+        actionButtons += `<button class="btn btn-ligar" onclick="location.href='/start-bot'">Ligar Bot 🚀</button>`;
+    }
 
     res.send(`
         <!DOCTYPE html>
-        <html><head><title>M.S.E - GessoBot Panel</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }
-            .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: inline-block; max-width: 400px; width: 100%; }
-            #qr-container { margin: 20px 0; min-height: 250px; display: flex; align-items: center; justify-content: center; border: 2px dashed #ddd; border-radius: 10px; background: #fafafa; flex-direction: column; }
-            #qr-container img { max-width: 100%; }
-            .status-container { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px; font-weight: bold; background: #eee; padding: 8px 15px; border-radius: 20px; text-transform: uppercase; font-size: 0.85em; }
-            .led { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
-            .led-online { background-color: #28a745; box-shadow: 0 0 12px #28a745; }
-            .led-desligado { background-color: #dc3545; box-shadow: 0 0 12px #dc3545; }
-            .led-iniciando { background-color: #ffc107; box-shadow: 0 0 12px #ffc107; }
-            .btn-container { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-            button { border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 1em; }
-            .btn-start { background: #28a745; color: white; }
-            .btn-reset { background: #ff4747; color: white; }
-            .badge { display: inline-block; background: #007bff; color: white; font-size: 0.7em; padding: 2px 8px; border-radius: 20px; margin-left: 8px; vertical-align: middle; }
-        </style></head><body>
-            <div class="card">
-                <h2>🛠️ Marcos Software Engineer <br> GessoBot v3.0 <span class="badge">🚀 Motor Baileys</span></h2>
-                <div class="status-container"><div class="led ${ledClass}"></div><span>${botStatus}</span></div>
-                <div id="qr-container">${qrContent}</div>
-                <div class="btn-container">
-                    ${botStatus === 'desligado' ? '<button class="btn-start" onclick="location.href=\'/start-bot\'">Ligar Bot 🚀</button>' : ''}
-                    <button class="btn-reset" onclick="if(confirm('Resetar sessão?')) location.href='/reset-auth';">Resetar Conexão 🔄</button>
+        <html lang="pt-BR">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>M.S.E - Painel GessoBot</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+                /* Fundo usando paleta azul corporativo M.S.E */
+                body { background: radial-gradient(circle at center, #1e3a8a 0%, #0f172a 100%); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #333; }
+                .painel-card { background-color: #ffffff; width: 90%; max-width: 480px; border-radius: 16px; padding: 24px; box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4); z-index: 10; margin-top: 20px;}
+                .header { margin-bottom: 20px; }
+                .header-title { font-size: 1.1rem; color: #1e293b; font-weight: 600; margin-bottom: 4px; }
+                .header-subtitle { font-size: 1.4rem; color: #0f172a; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+                .badges { display: flex; gap: 10px; margin-top: 8px; font-size: 0.8rem; font-weight: 600; }
+                .badge-green { background-color: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 20px; border: 1px solid #bbf7d0; font-size: 0.8rem;}
+                .badge-blue { background-color: #e0f2fe; color: #075985; padding: 4px 10px; border-radius: 20px; border: 1px solid #bae6fd; }
+                .version-text { font-size: 0.85rem; color: #64748b; margin-top: 8px; }
+                .status-bar { background-color: #1e293b; border-radius: 10px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+                .status-label { color: #f8fafc; font-weight: bold; font-size: 0.95rem; letter-spacing: 0.5px; }
+                .status-indicator { background-color: #334155; padding: 6px 14px; border-radius: 20px; color: #f8fafc; font-size: 0.85rem; font-weight: bold; display: flex; align-items: center; gap: 8px; }
+                .dot { width: 10px; height: 10px; background-color: ${ledColor}; border-radius: 50%; box-shadow: 0 0 8px ${ledColor}; }
+                ${ledColor === '#eab308' ? `.dot { animation: pulse 1.5s infinite; } @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(234, 179, 8, 0); } 100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); } }` : ''}
+                .qr-area { background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 30px 20px; text-align: center; margin-bottom: 20px; min-height: 160px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+                .qr-area p { color: #475569; font-size: 0.95rem; font-weight: 500; margin-bottom: 5px; }
+                .qr-area small { color: #64748b; font-size: 0.8rem; }
+                .button-group { display: flex; gap: 12px; flex-direction: column;}
+                .btn { padding: 14px; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: transform 0.1s, opacity 0.2s; display: flex; justify-content: center; align-items: center; gap: 8px; width: 100%;}
+                .btn:active { transform: scale(0.97); }
+                .btn-ligar { background-color: #1d4ed8; color: white; box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3); }
+                .btn-ligar:hover { background-color: #1e40af; }
+                .btn-reset { background-color: #dc2626; color: white; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3); }
+                .btn-reset:hover { background-color: #b91c1c; }
+                .footer-text { margin-top: 20px; color: #cbd5e1; font-size: 0.8rem; opacity: 0.8; margin-bottom: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="painel-card">
+                <div class="header">
+                    <div class="header-title">M.S.E (Marcos Software Engineer)</div>
+                    <div class="header-subtitle">
+                        PAINEL GESSOBOT
+                        <span class="badge-green">🛡️ Anti-Ban</span>
+                    </div>
+                    <div class="version-text">Bot Pro v3.0 | Status: ${botStatus}</div>
+                    <div class="badges">
+                        <span class="badge-blue">🚀 Motor Baileys</span>
+                    </div>
+                </div>
+
+                <div class="status-bar">
+                    <span class="status-label">STATUS:</span>
+                    <div class="status-indicator">
+                        <div class="dot"></div>
+                        <span>${statusTextLabel}</span>
+                    </div>
+                </div>
+
+                <div class="qr-area">
+                    ${qrContent}
+                </div>
+
+                <div class="button-group">
+                    ${actionButtons}
+                    <button class="btn btn-reset" onclick="if(confirm('Resetar sessão?')) location.href='/reset-auth';">Resetar Conexão 🔄</button>
                 </div>
             </div>
-            <script>setTimeout(() => { location.reload(); }, 4000);</script>
-        </body></html>
+
+            <div class="footer-text">
+                © M.S.E - Marcos Software Engineer 2026
+            </div>
+            
+            <script>
+                if('${botStatus}' !== 'online'){
+                    setTimeout(() => { location.reload(); }, 4000);
+                }
+            </script>
+        </body>
+        </html>
     `);
 });
 
@@ -113,7 +181,7 @@ app.get('/reset-auth', (req, res) => {
     const sessionPath = path.join(__dirname, '../baileys_auth_info');
     try {
         if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true, force: true });
-        res.send(`<body style="text-align:center;padding:50px"><h1>🔄 Resetando Baileys...</h1><script>setTimeout(()=>{window.location.href='/start-bot'},3000)</script></body>`);
+        res.send(`<body style="text-align:center;padding:50px;font-family:sans-serif;background:#f4f4f9;"><h1>🔄 Resetando Baileys...</h1><script>setTimeout(()=>{window.location.href='/start-bot'},3000)</script></body>`);
         setTimeout(() => process.exit(1), 1000);
     } catch (err) { res.status(500).send('Erro: ' + err); }
 });
