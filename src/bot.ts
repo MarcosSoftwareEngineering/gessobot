@@ -1,202 +1,147 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import util from 'util';
-import readline from 'readline';
 import { getSessao, salvarSessao, ativarBloqueio36h, formatarMensagemLead, resetarSessao } from './sessao';
+import { calcularOrcamento, NOMES_SERVICO } from './orcamento';
 
 const execPromise = util.promisify(exec);
 
-// Configuração para ler entradas direto no terminal do VS Code
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const question = (texto: string) => new Promise<string>((resolve) => rl.question(texto, resolve));
+export async function processarMensagem(sock: any, msg: any) {
+    const textoMensagem = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+    if (!textoMensagem) return;
 
-async function connectToWhatsApp() {
-    // Gerencia a sessão de autenticação do Baileys
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const remetente = msg.key.remoteJid;
+    if (!remetente) return;
 
-    const sock = makeWASocket({
-        printQRInTerminal: true,
-        auth: state,
-        // O Baileys exige um browser específico para o código de emparelhamento funcionar sem bugs
-        browser: ['Chrome (Windows)', '', ''] 
-    });
+    const reply = async (texto: string) => {
+        await sock.sendMessage(remetente, { text: texto }, { quoted: msg });
+    };
 
-    // 🌟 LÓGICA DE EMPARELHAMENTO POR NÚMERO (PAIRING CODE) 🌟
-    if (!sock.authState.creds.registered) {
-        // Aguarda 2 segundos para o QR Code renderizar caso o usuário prefira a câmera
-        setTimeout(async () => {
-            console.log(`\n[MSE System] Autenticação necessária.`);
-            const resposta = await question('Deseja conectar gerando um código para o número de telefone? (s/n): ');
-            
-            if (resposta.toLowerCase() === 's') {
-                const numeroCliente = await question('Digite o número do WhatsApp com DDI e DDD (ex: 5511999999999): ');
-                
-                try {
-                    const code = await sock.requestPairingCode(numeroCliente.trim());
-                    const codeFormatado = code?.match(/.{1,4}/g)?.join("-") || code;
-                    
-                    console.log(`\n======================================`);
-                    console.log(`📱 CÓDIGO DE EMPARELHAMENTO: ${codeFormatado}`);
-                    console.log(`Abra o WhatsApp no celular > Aparelhos Conectados > Conectar com Número`);
-                    console.log(`======================================\n`);
-                } catch (error) {
-                    console.error('❌ Erro ao solicitar o código. Verifique se o número está correto.', error);
-                }
-            }
-        }, 2000);
+    const sessao = await getSessao(remetente);
+
+    // 🛡️ REGRA DE NEGÓCIO: A "Geladeira" de 36 horas
+    if (sessao.estado === 'BLOQUEIO_ATIVO') {
+        console.log(`Mensagem ignorada de ${remetente} (Bloqueio 36h ativo)`);
+        return; 
     }
 
-    // Salva as credenciais sempre que houver atualização
-    sock.ev.on('creds.update', saveCreds);
+    switch (sessao.estado) {
+        case 'INICIO':
+            await reply("Olá! 👋 Sou o GessoBot, o assistente virtual da nossa empresa.\n\nPara eu te passar um orçamento rapidinho, como eu posso te chamar?");
+            sessao.estado = 'AGUARDANDO_NOME';
+            await salvarSessao(remetente, sessao);
+            break;
 
-    // Monitora a conexão
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Conexão fechada. Reconectando...', shouldReconnect);
-            if (shouldReconnect) {
-                connectToWhatsApp();
+        case 'AGUARDANDO_NOME':
+            sessao.dados.nome = textoMensagem.trim();
+            await reply(`Prazer, ${sessao.dados.nome}! 🤝\n\nQual serviço precisa de cotar hoje?\n\n1️⃣ - Serviços de Drywall\n2️⃣ - Gesso de plaquinha\n\n👉 Digite apenas o número da opção:`);
+            sessao.estado = 'MENU_SERVICO';
+            await salvarSessao(remetente, sessao);
+            break;
+
+        case 'MENU_SERVICO':
+            const opcao = textoMensagem.trim();
+            if (opcao === '1') {
+                sessao.dados.servico = 'drywall';
+            } else if (opcao === '2') {
+                sessao.dados.servico = 'gesso_parede';
+            } else {
+                await reply("Opção inválida. Por favor, digite 1 ou 2.");
+                return; 
             }
-        } else if (connection === 'open') {
-            console.log('✅ GessoBot conectado com Baileys e pronto para operar!');
-        }
-    });
 
-    // Escuta novas mensagens
-    sock.ev.on('messages.upsert', async (m) => {
-        if (m.type !== 'notify') return;
-        const msg = m.messages[0];
-        
-        // Ignora mensagens do próprio bot ou mensagens sem texto
-        if (!msg.message || msg.key.fromMe) return;
+            await reply("Excelente escolha!\n\nAgora preciso saber o tamanho do local. Diga-me a Largura e o Comprimento do ambiente (ex: 3x4) ou a metragem total.");
+            sessao.estado = 'AGUARDANDO_METRAGEM';
+            await salvarSessao(remetente, sessao);
+            break;
 
-        const remetente = msg.key.remoteJid!;
-        
-        // Ignora mensagens de status e de grupos
-        if (remetente === 'status@broadcast' || remetente.includes('@g.us')) return;
+        case 'AGUARDANDO_METRAGEM':
+            const dimensao = textoMensagem.trim();
+            
+            // Lógica Sénior: Extrai a metragem (multiplica se for 3x4, ou pega o número direto se for 12)
+            let m2 = 1; // fallback
+            const numeros = dimensao.match(/[\d.,]+/g);
+            if (numeros && numeros.length >= 2 && dimensao.toLowerCase().includes('x')) {
+                const l = parseFloat(numeros[0].replace(',', '.'));
+                const c = parseFloat(numeros[1].replace(',', '.'));
+                if (!isNaN(l) && !isNaN(c)) m2 = l * c;
+            } else if (numeros && numeros.length >= 1) {
+                const val = parseFloat(numeros[0].replace(',', '.'));
+                if (!isNaN(val)) m2 = val;
+            }
 
-        // O Baileys armazena o texto de formas diferentes dependendo do tipo da mensagem
-        const textoMensagem = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
-        if (!textoMensagem) return;
+            // Atualiza os dados da sessão com a matemática resolvida
+            sessao.dados.metragem = m2;
+            sessao.dados.ambiente = dimensao;
+            sessao.dados.localizacao = 'Não informada'; 
+            sessao.dados.acabamento = 'Padrão';
 
-        // Helper function para facilitar o envio de respostas
-        const reply = async (texto: string) => {
-            await sock.sendMessage(remetente, { text: texto }, { quoted: msg });
-        };
+            await reply("⏳ Só um instante! Estou a calcular os materiais, passar todas as informações para um especialista e a gerar a prévia do seu orçamento...");
 
-        // Recupera a sessão atual do cliente
-        const sessao = await getSessao(remetente);
+            try {
+                // Integração com o orcamento.ts (Aplica a regra dos R$ 60,00)
+                const orcamentoCalculado = calcularOrcamento(sessao.dados);
 
-        // 🛡️ REGRA DE NEGÓCIO: A "Geladeira" de 36 horas
-        if (sessao.estado === 'BLOQUEIO_ATIVO') {
-            console.log(`Mensagem ignorada de ${remetente} (Bloqueio 36h ativo)`);
-            return; 
-        }
+                const timestamp = Date.now();
+                const jsonPath = path.resolve(__dirname, `../temp_dados_${timestamp}.json`);
+                const pdfPath = path.resolve(__dirname, `../orcamento_${timestamp}.pdf`);
 
-        // Máquina de Estados do Fluxo de Conversa
-        switch (sessao.estado) {
-            case 'INICIO':
-                await reply("Olá! 👋 Sou o GessoBot, o assistente virtual da nossa empresa.\n\nPara eu te passar um orçamento rapidinho, como eu posso te chamar?");
-                sessao.estado = 'AGUARDANDO_NOME';
-                await salvarSessao(remetente, sessao);
-                break;
+                const telefonePuro = remetente.replace('@s.whatsapp.net', '');
 
-            case 'AGUARDANDO_NOME':
-                sessao.dados.nome = textoMensagem.trim();
-                await reply(`Prazer, ${sessao.dados.nome}! 🤝\n\nQual serviço você precisa cotar hoje?\n\n1️⃣ - Serviços de Drywall\n2️⃣ - Gesso de plaquinha\n\n👉 Digite apenas o número da opção:`);
-                sessao.estado = 'MENU_SERVICO';
-                await salvarSessao(remetente, sessao);
-                break;
+                // Transforma os dados reais no formato exato que o Python espera
+                const dadosPython = {
+                    nome: sessao.dados.nome,
+                    telefone: telefonePuro,
+                    localizacao: sessao.dados.localizacao,
+                    ambiente: sessao.dados.ambiente,
+                    servico: NOMES_SERVICO[sessao.dados.servico!],
+                    metragem: sessao.dados.metragem,
+                    subtotal: orcamentoCalculado.subtotal,
+                    desconto: orcamentoCalculado.desconto,
+                    valor_desconto: orcamentoCalculado.valorDesconto,
+                    total: orcamentoCalculado.total,
+                    prazo: orcamentoCalculado.prazo,
+                    itens: orcamentoCalculado.itens.map(item => ({
+                        descricao: item.descricao,
+                        qtd: item.quantidade,
+                        un: item.unidade,
+                        unit: item.valorUnitario,
+                        total: item.valorTotal
+                    }))
+                };
 
-            case 'MENU_SERVICO':
-                const opcao = textoMensagem.trim();
-                if (opcao === '1') {
-                    sessao.dados.servico = 'drywall';
-                } else if (opcao === '2') {
-                    sessao.dados.servico = 'gesso_parede';
-                } else {
-                    await reply("Opção inválida. Por favor, digite 1 ou 2.");
-                    return; 
-                }
+                fs.writeFileSync(jsonPath, JSON.stringify(dadosPython, null, 2));
 
-                await reply("Excelente escolha!\n\nAgora preciso saber o tamanho do local. Me diga a Largura e o Comprimento do ambiente (ex: 3x4).");
-                sessao.estado = 'AGUARDANDO_METRAGEM';
-                await salvarSessao(remetente, sessao);
-                break;
+                const pythonScript = path.resolve(__dirname, 'gerar_orcamento.py');
+                await execPromise(`python "${pythonScript}" "${jsonPath}" "${pdfPath}"`);
 
-            case 'AGUARDANDO_METRAGEM':
-                const dimensao = textoMensagem.trim();
-                sessao.dados.localizacao = 'Não informada'; 
+                // Envia a Lead e o PDF com os valores reais para o ADMIN
+                const textoLead = formatarMensagemLead(sessao.dados, remetente);
+                const numeroAdmin = sock.user?.id.split(':')[0] + '@s.whatsapp.net';
+                
+                await sock.sendMessage(numeroAdmin, { text: textoLead });
+                await sock.sendMessage(numeroAdmin, { 
+                    document: { url: pdfPath }, 
+                    mimetype: 'application/pdf', 
+                    fileName: 'Orcamento_Tavares_Gesso.pdf',
+                    caption: `Prévia gerada com sucesso.\nValor Total: R$ ${orcamentoCalculado.total.toFixed(2)}`
+                });
 
-                await reply("⏳ Só um instante! Estou passando todas as informações para um especialista e gerando a prévia do seu orçamento...");
+                // Resposta final ao cliente
+                await reply("Muito bem, estamos a passar todas as informações para um especialista e num prazo de até 24h a nossa equipa entrará em contacto já com uma prévia do orçamento. Posso ajudar em algo mais?");
+                
+                await ativarBloqueio36h(remetente, sessao);
 
-                try {
-                    // 1. Prepara os arquivos temporários para o Python
-                    const timestamp = Date.now();
-                    const jsonPath = path.resolve(__dirname, `../temp_dados_${timestamp}.json`);
-                    const pdfPath = path.resolve(__dirname, `../orcamento_${timestamp}.pdf`);
+                // Limpeza de cache
+                if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
+                if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
 
-                    // O Baileys usa '@s.whatsapp.net', limpamos isso para salvar só os números
-                    const telefonePuro = remetente.replace('@s.whatsapp.net', '');
-
-                    // Transforma os dados no formato esperado pelo script Python
-                    const dadosPython = {
-                        nome: sessao.dados.nome,
-                        telefone: telefonePuro,
-                        localizacao: sessao.dados.localizacao,
-                        ambiente: dimensao,
-                        servico: sessao.dados.servico === 'drywall' ? 'Serviço de Drywall' : 'Gesso de Plaquinha',
-                        metragem: dimensao,
-                        itens: [
-                           { descricao: `Mão de obra e Material para ${sessao.dados.servico === 'drywall' ? 'Drywall' : 'Gesso'}`, qtd: 1, un: "un", unit: 0, total: 0 }
-                        ],
-                        total: 0
-                    };
-
-                    // Salva o arquivo de intercâmbio JSON
-                    fs.writeFileSync(jsonPath, JSON.stringify(dadosPython, null, 2));
-
-                    // 2. Executa o Script Python passando os caminhos como argumentos
-                    const pythonScript = path.resolve(__dirname, 'gerar_orcamento.py');
-                    await execPromise(`python "${pythonScript}" "${jsonPath}" "${pdfPath}"`);
-
-                    // 3. Envia o Lead para o ADMIN (O próprio número onde o bot roda)
-                    const textoLead = formatarMensagemLead(sessao.dados, remetente);
-                    // No Baileys, o número conectado fica dentro de sock.user.id
-                    const numeroAdmin = sock.user?.id.split(':')[0] + '@s.whatsapp.net';
-                    
-                    // Envia texto e PDF usando o padrão do Baileys
-                    await sock.sendMessage(numeroAdmin, { text: textoLead });
-                    await sock.sendMessage(numeroAdmin, { 
-                        document: { url: pdfPath }, 
-                        mimetype: 'application/pdf', 
-                        fileName: 'Orcamento_Tavares_Gesso.pdf',
-                        caption: 'Prévia gerada com sucesso.'
-                    });
-
-                    // 4. Resposta de finalização para o Cliente
-                    await reply("Muito bem, estamos passando todas as informações para um especialista e em um prazo de até 24h nossa equipe entrará em contato já com uma prévia do orçamento, posso ajudá-lo em algo mais?");
-                    
-                    // 5. Ativa o bloqueio temporário de 36 horas
-                    await ativarBloqueio36h(remetente, sessao);
-
-                    // 6. Coleta de lixo (Deleta os arquivos temp criados)
-                    if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
-                    if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-
-                } catch (error) {
-                    console.error("Erro crítico ao processar orçamento:", error);
-                    await reply("❌ Ocorreu um erro ao gerar o seu documento. Nossa equipe já foi notificada.");
-                    await resetarSessao(remetente);
-                }
-                break;
-        }
-    });
+            } catch (error) {
+                console.error("Erro crítico ao processar orçamento:", error);
+                await reply("❌ Ocorreu um erro ao gerar o seu documento. A nossa equipa já foi notificada.");
+                await resetarSessao(remetente);
+            }
+            break;
+    }
 }
-
-// Inicia a aplicação
-connectToWhatsApp();
