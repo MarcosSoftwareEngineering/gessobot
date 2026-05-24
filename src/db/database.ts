@@ -21,6 +21,18 @@ export async function query(sql: string, params: any[] = []) {
   }
 }
 
+// ==========================================
+// 🗄️ KEEP-ALIVE BANCO NEON (evita arquivamento)
+// ==========================================
+setInterval(async () => {
+  try {
+    await query('SELECT 1');
+    console.log('🗄️ Keep-alive banco Neon OK');
+  } catch (e) {
+    console.warn('⚠️ Keep-alive banco falhou:', e);
+  }
+}, 5 * 60 * 1000); // A cada 5 minutos
+
 export async function initDatabase(): Promise<void> {
   console.log('📦 Iniciando banco de dados Neon...');
 
