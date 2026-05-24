@@ -8,7 +8,8 @@ export type EstadoSessao =
   | 'AGUARDANDO_ACABAMENTO'
   | 'AGUARDANDO_LOCALIZACAO'
   | 'CONFIRMANDO_DADOS'
-  | 'FINALIZADO';
+  | 'FINALIZADO'
+  | 'BLOQUEIO_ATIVO'; // 👈 Estado adicionado para a regra de 36h
 
 export type TipoServico =
   | 'forro_liso'
@@ -25,6 +26,7 @@ export interface DadosSessao {
   ambiente?: string;
   acabamento?: string;
   localizacao?: string;
+  bloqueadoAte?: number; // 👈 Propriedade adicionada para controlar o tempo do lead
 }
 
 export interface Sessao {

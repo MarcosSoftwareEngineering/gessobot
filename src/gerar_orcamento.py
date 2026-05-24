@@ -5,13 +5,13 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    HRFlowable, Image, KeepTogether
+    Image as RLImage
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus import Flowable
 from reportlab.lib.colors import HexColor
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageDraw
 import io
 import sys
 import json
@@ -67,7 +67,6 @@ class LinhaColorida(Flowable):
         self.cor = cor
         self.espessura = espessura
         self._largura = largura
-        self.height = espessura + 4
 
     def draw(self):
         w = self._largura or self.canv._pagesize[0] - 4*cm
@@ -75,21 +74,55 @@ class LinhaColorida(Flowable):
         self.canv.setLineWidth(self.espessura)
         self.canv.line(0, self.espessura/2, w, self.espessura/2)
 
+# ── Engenharia de Imagens (Tratamento via PIL) ───────────────
 def cortar_circular(img_path, tamanho=180):
-    """Recorta imagem em círculo para logo."""
+    """Recorta imagem no centro e aplica máscara circular anti-aliased."""
     img = PILImage.open(img_path).convert("RGBA")
-    img = img.resize((tamanho, tamanho), PILImage.LANCZOS)
+    
+    # Crop central para garantir proporção 1:1 sem achatar a logo
+    min_dim = min(img.size)
+    left = (img.width - min_dim) / 2
+    top = (img.height - min_dim) / 2
+    img = img.crop((left, top, left + min_dim, top + min_dim))
+    img = img.resize((tamanho, tamanho), PILImage.Resampling.LANCZOS)
+    
+    # Máscara circular
     mask = PILImage.new("L", (tamanho, tamanho), 0)
-    from PIL import ImageDraw
     draw = ImageDraw.Draw(mask)
     draw.ellipse((0, 0, tamanho, tamanho), fill=255)
+    
     result = PILImage.new("RGBA", (tamanho, tamanho), (255, 255, 255, 0))
     result.paste(img, (0, 0), mask)
+    
     buf = io.BytesIO()
     result.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
+def preparar_imagem_portfolio(img_path, largura, altura):
+    """Processa as fotos do portfólio via crop central (object-fit: cover)."""
+    try:
+        img = PILImage.open(img_path).convert("RGB")
+        img_ratio = img.width / img.height
+        target_ratio = largura / altura
+        
+        if img_ratio > target_ratio:
+            new_w = int(target_ratio * img.height)
+            left = (img.width - new_w) / 2
+            img = img.crop((left, 0, left + new_w, img.height))
+        else:
+            new_h = int(img.width / target_ratio)
+            top = (img.height - new_h) / 2
+            img = img.crop((0, top, img.width, top + new_h))
+            
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        buf.seek(0)
+        return RLImage(buf, width=largura, height=altura)
+    except Exception as e:
+        return Paragraph(f"Erro na imagem", estilos()["obs"])
+
+# ── Motor do PDF ─────────────────────────────────────────────
 def gerar_pdf(dados: dict, output_path: str):
     doc = SimpleDocTemplate(
         output_path,
@@ -103,10 +136,10 @@ def gerar_pdf(dados: dict, output_path: str):
     W = A4[0] - 3.6*cm  
 
     # ════════════════════════════════════════
-    # CABEÇALHO com gradiente simulado
+    # CABEÇALHO 
     # ════════════════════════════════════════
-    logo_buf = cortar_circular("src/assets/Tavares_Gesso.jpeg", 130) # CAMINHO CORRIGIDO
-    logo_img = Image(logo_buf, width=3.2*cm, height=3.2*cm)
+    logo_buf = cortar_circular("src/assets/Tavares_Gesso.jpeg", 150) 
+    logo_img = RLImage(logo_buf, width=3.2*cm, height=3.2*cm)
 
     header_data = [[
         logo_img,
@@ -130,7 +163,7 @@ def gerar_pdf(dados: dict, output_path: str):
         ]
     ]]
 
-    header_table = Table(header_data, colWidths=[3.5*cm, W - 3.5*cm - 4*cm, 4*cm])
+    header_table = Table(header_data, colWidths=[3.8*cm, W - 3.8*cm - 4*cm, 4*cm])
     header_table.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,-1), AZUL_ESCURO),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
@@ -203,119 +236,41 @@ def gerar_pdf(dados: dict, output_path: str):
     story.append(Spacer(1, 16))
 
     # ════════════════════════════════════════
-    # TABELA DE ITENS
-    # ════════════════════════════════════════
-    story.append(Paragraph("📋  ITENS DO ORÇAMENTO", st["titulo_secao"]))
-    story.append(LinhaColorida(AZUL_MEDIO, 1.5, W))
-    story.append(Spacer(1, 8))
-
-    header_row = [
-        Paragraph("<b>Descrição</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-            fontSize=9, textColor=BRANCO, alignment=TA_LEFT)),
-        Paragraph("<b>Qtd</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-            fontSize=9, textColor=BRANCO, alignment=TA_CENTER)),
-        Paragraph("<b>Un</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-            fontSize=9, textColor=BRANCO, alignment=TA_CENTER)),
-        Paragraph("<b>Unit. (R$)</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-            fontSize=9, textColor=BRANCO, alignment=TA_RIGHT)),
-        Paragraph("<b>Total (R$)</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-            fontSize=9, textColor=BRANCO, alignment=TA_RIGHT)),
-    ]
-
-    itens = dados.get("itens", [])
-    rows = [header_row]
-    for i, item in enumerate(itens):
-        bg = CINZA_CLARO if i % 2 == 0 else BRANCO
-        rows.append([
-            Paragraph(item["descricao"], ParagraphStyle("td", fontName="Helvetica",
-                fontSize=9, textColor=CINZA_ESCURO, alignment=TA_LEFT)),
-            Paragraph(str(item["qtd"]), ParagraphStyle("td", fontName="Helvetica",
-                fontSize=9, textColor=CINZA_ESCURO, alignment=TA_CENTER)),
-            Paragraph(item["un"], ParagraphStyle("td", fontName="Helvetica",
-                fontSize=9, textColor=CINZA_ESCURO, alignment=TA_CENTER)),
-            Paragraph(f"R$ {item['unit']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                ParagraphStyle("td", fontName="Helvetica", fontSize=9,
-                textColor=CINZA_ESCURO, alignment=TA_RIGHT)),
-            Paragraph(f"R$ {item['total']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                ParagraphStyle("td", fontName="Helvetica-Bold", fontSize=9,
-                textColor=AZUL_ESCURO, alignment=TA_RIGHT)),
-        ])
-
-    col_w = [W-9.5*cm, 1.8*cm, 1.5*cm, 3*cm, 3.2*cm]
-    itens_table = Table(rows, colWidths=col_w)
-    itens_table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), AZUL_ESCURO),
-        ("ROWBACKGROUNDS", (0,1), (-1,-1), [CINZA_CLARO, BRANCO]),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("LEFTPADDING", (0,0), (-1,-1), 10),
-        ("RIGHTPADDING", (0,0), (-1,-1), 8),
-        ("TOPPADDING", (0,0), (-1,-1), 8),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
-        ("LINEBELOW", (0,0), (-1,-1), 0.3, HexColor("#DDDDDD")),
-        ("LINEAFTER", (0,0), (-1,-1), 0.3, HexColor("#DDDDDD")),
-    ]))
-    story.append(itens_table)
-    story.append(Spacer(1, 10))
-
-    # ════════════════════════════════════════
-    # TOTAIS
-    # ════════════════════════════════════════
-    subtotal = dados.get("subtotal", 0)
-    desconto_pct = dados.get("desconto", 0)
-    valor_desc = dados.get("valor_desconto", 0)
-    total = dados.get("total", 0)
-
-    def fmt(v): return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
-
-    totais_data = [
-        [Paragraph("Subtotal:", ParagraphStyle("sl", fontName="Helvetica", fontSize=9,
-            textColor=CINZA_MEDIO, alignment=TA_RIGHT)),
-         Paragraph(fmt(subtotal), ParagraphStyle("sv", fontName="Helvetica", fontSize=9,
-            textColor=CINZA_ESCURO, alignment=TA_RIGHT))],
-        [Paragraph(f"Desconto ({desconto_pct}%):", ParagraphStyle("sl", fontName="Helvetica",
-            fontSize=9, textColor=VERDE, alignment=TA_RIGHT)),
-         Paragraph(f"- {fmt(valor_desc)}", ParagraphStyle("sv", fontName="Helvetica",
-            fontSize=9, textColor=VERDE, alignment=TA_RIGHT))],
-    ]
-
-    totais_table = Table(totais_data, colWidths=[W-4*cm, 4*cm])
-    totais_table.setStyle(TableStyle([
-        ("ALIGN", (0,0), (-1,-1), "RIGHT"),
-        ("TOPPADDING", (0,0), (-1,-1), 4),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
-        ("RIGHTPADDING", (0,0), (-1,-1), 6),
-    ]))
-    story.append(totais_table)
-    story.append(Spacer(1, 6))
-
-    # Box do total final
-    total_box = Table([
-        [Paragraph("VALOR TOTAL:", st["total_label"]),
-         Paragraph(fmt(total), st["total_valor"])]
-    ], colWidths=[W/2, W/2])
-    total_box.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), AZUL_ESCURO),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("LEFTPADDING", (0,0), (-1,-1), 16),
-        ("RIGHTPADDING", (0,0), (-1,-1), 16),
-        ("TOPPADDING", (0,0), (-1,-1), 12),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 12),
-        ("ROUNDEDCORNERS", [6,6,6,6]),
-    ]))
-    story.append(total_box)
-    story.append(Spacer(1, 16))
-
-    # ════════════════════════════════════════
-    # PORTFÓLIO
+    # PORTFÓLIO (Grade 2x2 Refatorada)
     # ════════════════════════════════════════
     story.append(Paragraph("📸  NOSSO PORTFÓLIO", st["titulo_secao"]))
     story.append(LinhaColorida(AZUL_MEDIO, 1.5, W))
     story.append(Spacer(1, 8))
 
-    portfolio_img = Image("src/assets/Elson.jpeg", width=W, height=7*cm) # CAMINHO CORRIGIDO
-    portfolio_img.hAlign = "CENTER"
-    story.append(portfolio_img)
-    story.append(Spacer(1, 6))
+    # Calcula dimensões proporcionais para a tabela 2x2
+    largura_img = (W / 2) - 0.2*cm 
+    altura_img = 5.0*cm
+
+    # Imagens do sistema mapeadas exatamente como nos arquivos
+    img_grid = [
+        [
+            preparar_imagem_portfolio("src/assets/El.03.jpeg", largura_img, altura_img),
+            preparar_imagem_portfolio("src/assets/El.04.jpeg", largura_img, altura_img)
+        ],
+        [
+            preparar_imagem_portfolio("src/assets/E.l09.jpeg", largura_img, altura_img),
+            preparar_imagem_portfolio("src/assets/El.07.jpeg", largura_img, altura_img)
+        ]
+    ]
+
+    tabela_portfolio = Table(img_grid, colWidths=[W/2, W/2])
+    tabela_portfolio.setStyle(TableStyle([
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+        ("TOPPADDING", (0,0), (-1,-1), 3),
+        ("LEFTPADDING", (0,0), (-1,-1), 3),
+        ("RIGHTPADDING", (0,0), (-1,-1), 3),
+    ]))
+    
+    story.append(tabela_portfolio)
+    story.append(Spacer(1, 8))
+    
     story.append(Paragraph(
         "Acabamentos premium com design exclusivo • Forro liso • Drywall • Sancas • Gesso 3D",
         ParagraphStyle("port_leg", fontName="Helvetica-Oblique", fontSize=8,
@@ -347,14 +302,13 @@ def gerar_pdf(dados: dict, output_path: str):
     story.append(Spacer(1, 14))
 
     # ════════════════════════════════════════
-    # OBSERVAÇÕES
+    # OBSERVAÇÕES E RODAPÉ
     # ════════════════════════════════════════
     obs_box = Table([[
         Paragraph(
             "⚠️ <b>Observações:</b> Orçamento válido por 15 dias. "
             "Valores sujeitos a alteração após vistoria técnica in loco. "
-            "Não inclui pintura, elétrica ou outras especialidades. "
-            "Pagamento: 50% na assinatura + 50% na entrega.",
+            "Não inclui pintura, elétrica ou outras especialidades.",
             st["obs"])
     ]], colWidths=[W])
     obs_box.setStyle(TableStyle([
@@ -369,21 +323,15 @@ def gerar_pdf(dados: dict, output_path: str):
     story.append(obs_box)
     story.append(Spacer(1, 16))
 
-    # ════════════════════════════════════════
-    # RODAPÉ
-    # ════════════════════════════════════════
     story.append(LinhaColorida(AZUL_MEDIO, 1, W))
     story.append(Spacer(1, 6))
     story.append(Paragraph(
-        "Tavares Gesso — Montador de Drywall  •  "
-        "📍 Lauro de Freitas - BA  •  "
-        "Este documento foi gerado automaticamente pelo GessoBot",
+        "Tavares Gesso — Montador de Drywall  •  📍 Lauro de Freitas - BA  •  Este documento foi gerado automaticamente pelo GessoBot",
         st["rodape"]
     ))
 
     doc.build(story)
     print(f"✅ PDF gerado: {output_path}")
-
 
 # ── EXECUÇÃO VIA NODE ────────────────────────────────────────
 if __name__ == "__main__":
@@ -398,7 +346,7 @@ if __name__ == "__main__":
             gerar_pdf(dados_cliente, output_path)
         except Exception as e:
             print(f"Erro interno no Python: {e}")
-            sys.exit(1) # Avisa o Node que deu erro
+            sys.exit(1)
     else:
         print("Erro: Faltam os caminhos do JSON e do PDF.")
         sys.exit(1)

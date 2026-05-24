@@ -3,32 +3,35 @@ import path from 'path';
 import fs from 'fs';
 import { TipoServico, DadosSessao, Orcamento, ItemOrcamento, TabelaPrecos } from './types';
 
+// ============================================================================
+// TABELA DE PREÇOS ATUALIZADA (R$ 60,00 M² - Material Incluso)
+// ============================================================================
 const TABELA_PRECOS: Record<TipoServico, TabelaPrecos> = {
   forro_liso: {
-    materialPorM2: 18.0,
-    maoObraPorM2: 47.0,
+    materialPorM2: 0, 
+    maoObraPorM2: 60.0, 
     acabamento: 320.0,
   },
   gesso_parede: {
-    materialPorM2: 12.0,
-    maoObraPorM2: 35.0,
+    materialPorM2: 0,
+    maoObraPorM2: 60.0,
     acabamento: 280.0,
   },
   sancas_molduras: {
     materialPorM2: 0,
     maoObraPorM2: 0,
-    maoObraPorMl: 35.0,
-    materialPorMl: 18.0,
+    maoObraPorMl: 60.0, 
+    materialPorMl: 0,
     acabamento: 0,
   },
   drywall: {
-    materialPorM2: 42.0,
-    maoObraPorM2: 55.0,
+    materialPorM2: 0,
+    maoObraPorM2: 60.0,
     acabamento: 350.0,
   },
   gesso_3d: {
-    materialPorM2: 85.0,
-    maoObraPorM2: 65.0,
+    materialPorM2: 0,
+    maoObraPorM2: 60.0,
     acabamento: 400.0,
   },
 };
@@ -56,13 +59,14 @@ export function calcularOrcamento(dados: DadosSessao, descontoPct: number = 5): 
 
   if (servico === 'sancas_molduras') {
     const ml = dados.metrosLineares || 10;
-    const maoObra = ml * (precos.maoObraPorMl || 35);
-    const material = ml * (precos.materialPorMl || 18);
+    const maoObra = ml * (precos.maoObraPorMl || 60);
+    const material = ml * (precos.materialPorMl || 0);
+    
     itens.push({
-      descricao: NOMES_SERVICO[servico],
+      descricao: `${NOMES_SERVICO[servico]} (Material e Mão de Obra)`,
       quantidade: ml,
       unidade: 'ml',
-      valorUnitario: (precos.maoObraPorMl || 35) + (precos.materialPorMl || 18),
+      valorUnitario: (precos.maoObraPorMl || 60) + (precos.materialPorMl || 0),
       valorTotal: maoObra + material,
     });
   } else {
@@ -70,24 +74,27 @@ export function calcularOrcamento(dados: DadosSessao, descontoPct: number = 5): 
     const maoObra = m2 * precos.maoObraPorM2;
     const material = m2 * precos.materialPorM2;
 
-    itens.push(
-      {
-        descricao: NOMES_SERVICO[servico],
-        quantidade: m2,
-        unidade: 'm²',
-        valorUnitario: precos.maoObraPorM2,
-        valorTotal: maoObra,
-      },
-      {
-        descricao: 'Material (gesso, perfis, pregos)',
+    itens.push({
+      descricao: `${NOMES_SERVICO[servico]} (Material e Mão de Obra)`,
+      quantidade: m2,
+      unidade: 'm²',
+      valorUnitario: precos.maoObraPorM2,
+      valorTotal: maoObra,
+    });
+
+    // Só adiciona a linha de material extra no PDF se o valor for maior que zero
+    if (precos.materialPorM2 > 0) {
+      itens.push({
+        descricao: 'Material Extra (gesso, perfis, pregos)',
         quantidade: 1,
         unidade: 'kit',
         valorUnitario: material,
         valorTotal: material,
-      }
-    );
+      });
+    }
   }
 
+  // Acabamento continua sendo cobrado à parte conforme tabela original
   if (precos.acabamento > 0) {
     itens.push({
       descricao: 'Arremate e acabamento',
@@ -146,17 +153,17 @@ _${nomeEmpresa}_`;
 }
 
 // ============================================================================
-// NOVA FUNÇÃO: GERAÇÃO E ENVIO DO PDF
+// GERAÇÃO E ENVIO DO PDF
 // ============================================================================
 export async function gerarEEnviarPdf(sock: any, numeroDoCliente: string, dadosSessaoDoCliente: DadosSessao) {
     const orcamentoCalculado = calcularOrcamento(dadosSessaoDoCliente);
     
-    // CORREÇÃO APLICADA: Limpeza do número movida para o topo da função
+    // Limpeza do número movida para o topo da função
     const numeroLimpo = numeroDoCliente.split('@')[0];
 
     const dadosParaPython = {
         nome: dadosSessaoDoCliente.nome || "Cliente",
-        telefone: numeroLimpo, // CORREÇÃO APLICADA: Usando numeroLimpo em vez da sessão
+        telefone: numeroLimpo,
         servico: NOMES_SERVICO[dadosSessaoDoCliente.servico!],
         metragem: dadosSessaoDoCliente.metragem,
         ambiente: dadosSessaoDoCliente.ambiente || "Não informado",

@@ -13,9 +13,21 @@ export async function getSessao(numero: string): Promise<Sessao> {
 
   if (result.rows.length > 0) {
     const row = result.rows[0];
+    const dados = JSON.parse(row.dados || '{}');
+    
+    // Verificação de segurança: Checa se o usuário está no período de silêncio (36h)
+    if (dados.bloqueadoAte && Date.now() < dados.bloqueadoAte) {
+       // Continua bloqueado
+       return { estado: 'BLOQUEIO_ATIVO', dados, isProcessing: false };
+    } else if (dados.bloqueadoAte && Date.now() >= dados.bloqueadoAte) {
+       // O tempo passou! Limpa o bloqueio e reseta a sessão
+       await resetarSessao(numero);
+       return { estado: 'INICIO', dados: {}, isProcessing: false };
+    }
+
     const sessao: Sessao = {
       estado: (row.estado as EstadoSessao) || 'INICIO',
-      dados: JSON.parse(row.dados || '{}'),
+      dados: dados,
       isProcessing: false,
     };
     cache.set(numero, sessao);
@@ -44,6 +56,26 @@ export async function salvarSessao(numero: string, sessao: Sessao): Promise<void
 export async function resetarSessao(numero: string): Promise<void> {
   const sessao: Sessao = { estado: 'INICIO', dados: {}, isProcessing: false };
   await salvarSessao(numero, sessao);
+}
+
+export async function ativarBloqueio36h(numero: string, sessao: Sessao): Promise<void> {
+  // 36 horas em milissegundos: 36 * 60 * 60 * 1000 = 129600000
+  const trintaESeisHoras = 129600000;
+  
+  sessao.estado = 'BLOQUEIO_ATIVO';
+  sessao.dados.bloqueadoAte = Date.now() + trintaESeisHoras;
+  
+  await salvarSessao(numero, sessao);
+}
+
+export function formatarMensagemLead(dados: DadosSessao, telefoneCliente: string): string {
+    return `🚨 *NOVO LEAD CAPTURADO* 🚨\n\n` +
+           `👤 *Nome:* ${dados.nome}\n` +
+           `📱 *WhatsApp:* ${telefoneCliente.replace('@c.us', '')}\n` +
+           `🛠️ *Serviço:* ${dados.servico}\n` +
+           `📏 *Metragem:* ${dados.metragem} m²\n` +
+           `📍 *Localização:* ${dados.localizacao || 'Não informada'}\n\n` +
+           `📄 _O orçamento em PDF gerado para este cliente está em anexo._`;
 }
 
 export async function salvarOrcamentoDB(
