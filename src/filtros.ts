@@ -9,6 +9,21 @@ export interface ResultadoFiltro {
   motivo?: string;
 }
 
+// ==========================================
+// FUNÇÃO EXTRATORA SUPREMA
+// ==========================================
+export function extrairTexto(msg: proto.IWebMessageInfo): string {
+    const m = msg.message;
+    if (!m) return "";
+
+    return m.conversation || 
+           m.extendedTextMessage?.text || 
+           m.ephemeralMessage?.message?.extendedTextMessage?.text || 
+           m.ephemeralMessage?.message?.conversation || 
+           m.imageMessage?.caption || 
+           "";
+}
+
 export async function aplicarFiltros(
   msg: proto.IWebMessageInfo,
   sock: WASocket
@@ -42,10 +57,9 @@ export async function aplicarFiltros(
     return { bloqueado: true, motivo: 'broadcast' };
   }
 
-  // 6. Ignorar mensagens vazias
-  const body = msg.message?.conversation 
-    || msg.message?.extendedTextMessage?.text 
-    || '';
+  // 6. Ignorar mensagens vazias (AGORA BLINDADO)
+  const body = extrairTexto(msg);
+  
   const hasMedia = !!(
     msg.message?.imageMessage ||
     msg.message?.videoMessage ||

@@ -15,6 +15,7 @@ export async function getSessao(numero: string): Promise<Sessao> {
     const row = result.rows[0];
     const dados = JSON.parse(row.dados || '{}');
     
+    /* // 🛡️ Lógica de bloqueio comentada para testes
     // Verificação de segurança: Checa se o usuário está no período de silêncio (36h)
     if (dados.bloqueadoAte && Date.now() < dados.bloqueadoAte) {
        // Continua bloqueado
@@ -24,6 +25,7 @@ export async function getSessao(numero: string): Promise<Sessao> {
        await resetarSessao(numero);
        return { estado: 'INICIO', dados: {}, isProcessing: false };
     }
+    */
 
     const sessao: Sessao = {
       estado: (row.estado as EstadoSessao) || 'INICIO',
@@ -70,12 +72,12 @@ export async function ativarBloqueio36h(numero: string, sessao: Sessao): Promise
 
 export function formatarMensagemLead(dados: DadosSessao, telefoneCliente: string): string {
     return `🚨 *NOVO LEAD CAPTURADO* 🚨\n\n` +
-           `👤 *Nome:* ${dados.nome}\n` +
-           `📱 *WhatsApp:* ${telefoneCliente.replace('@c.us', '')}\n` +
-           `🛠️ *Serviço:* ${dados.servico}\n` +
-           `📏 *Metragem:* ${dados.metragem} m²\n` +
-           `📍 *Localização:* ${dados.localizacao || 'Não informada'}\n\n` +
-           `📄 _O orçamento em PDF gerado para este cliente está em anexo._`;
+            `👤 *Nome:* ${dados.nome}\n` +
+            `📱 *WhatsApp:* ${telefoneCliente.replace('@c.us', '')}\n` +
+            `🛠️ *Serviço:* ${dados.servico}\n` +
+            `📏 *Metragem:* ${dados.metragem} m²\n` +
+            `📍 *Localização:* ${dados.localizacao || 'Não informada'}\n\n` +
+            `📄 _O orçamento em PDF gerado para este cliente está em anexo._`;
 }
 
 export async function salvarOrcamentoDB(

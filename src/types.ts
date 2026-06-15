@@ -1,38 +1,17 @@
-export type EstadoSessao =
-  | 'INICIO'
-  | 'AGUARDANDO_NOME'
-  | 'MENU_SERVICO'
-  | 'AGUARDANDO_METRAGEM'
-  | 'AGUARDANDO_METROS_LINEARES'
-  | 'AGUARDANDO_AMBIENTE'
-  | 'AGUARDANDO_ACABAMENTO'
-  | 'AGUARDANDO_LOCALIZACAO'
-  | 'CONFIRMANDO_DADOS'
-  | 'FINALIZADO'
-  | 'BLOQUEIO_ATIVO'; // 👈 Estado adicionado para a regra de 36h
+// ==========================================
+// ARQUIVO: src/types.ts
+// ==========================================
 
-export type TipoServico =
-  | 'forro_liso'
-  | 'gesso_parede'
-  | 'sancas_molduras'
-  | 'drywall'
-  | 'gesso_3d';
+export type TipoServico = 'forro_liso' | 'gesso_parede' | 'sancas_molduras' | 'drywall' | 'gesso_3d';
 
-export interface DadosSessao {
-  nome?: string;
-  servico?: TipoServico;
-  metragem?: number;
-  metrosLineares?: number;
-  ambiente?: string;
-  acabamento?: string;
-  localizacao?: string;
-  bloqueadoAte?: number; // 👈 Propriedade adicionada para controlar o tempo do lead
-}
+export type EstadoSessao = 'INICIO' | 'COLETANDO_DADOS' | 'FINALIZADO' | 'BLOQUEIO_ATIVO';
 
-export interface Sessao {
-  estado: EstadoSessao;
-  dados: DadosSessao;
-  isProcessing: boolean;
+export interface TabelaPrecos {
+  materialPorM2: number;
+  maoObraPorM2: number;
+  maoObraPorMl?: number;
+  materialPorMl?: number;
+  acabamento: number;
 }
 
 export interface ItemOrcamento {
@@ -52,10 +31,21 @@ export interface Orcamento {
   prazo: string;
 }
 
-export interface TabelaPrecos {
-  materialPorM2: number;
-  maoObraPorM2: number;
-  maoObraPorMl?: number;
-  materialPorMl?: number;
-  acabamento: number;
+export interface DadosSessao {
+  nome?: string;
+  telefone?: string;
+  endereco?: string;
+  localizacao?: string;
+  ambiente?: string;
+  servico?: TipoServico;
+  metragem?: number;
+  metrosLineares?: number;
+  acabamento?: string;
+  bloqueadoAte?: number;
+}
+
+export interface Sessao {
+  estado: EstadoSessao;
+  dados: DadosSessao;
+  isProcessing: boolean;
 }
