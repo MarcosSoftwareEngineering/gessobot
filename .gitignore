@@ -1,6 +1,23 @@
+# Dependências do Node
 node_modules/
+
+# Pastas de Build/Compilação
 dist/
-.wwebjs_auth/
-.wwebjs_cache/
+
+# Variáveis de Ambiente (Segurança Máxima)
 .env
+
+# Logs do Sistema
 *.log
+npm-debug.log*
+
+# ==========================================
+# 🛡️ BLINDAGEM DO GESSOBOT (M.S.E)
+# ==========================================
+
+# 1. Sessão do Motor Baileys (NUNCA SUBIR PARA O GITHUB)
+baileys_auth_info/
+
+# 2. Arquivos Temporários de Orçamento
+*.pdf
+temp_dados_*.json
