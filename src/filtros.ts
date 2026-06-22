@@ -10,6 +10,51 @@ export interface ResultadoFiltro {
 }
 
 // ==========================================
+// CONFIGURAÇÃO ANTI-BOT
+// ==========================================
+
+// JIDs de bots conhecidos que devem ser sempre ignorados.
+// Pode popular via env: BOT_JIDS="5511999999999@s.whatsapp.net,5511888888888@s.whatsapp.net"
+const BOT_JIDS = new Set(
+  (process.env.BOT_JIDS || '')
+    .split(',')
+    .map(j => j.trim())
+    .filter(Boolean)
+);
+
+// Palavras-chave que, combinadas com sinais de automação, indicam bot
+const BOT_NAME_HINTS = ['bot', 'assistant', 'assistente', 'automation', 'automatico', 'automático'];
+
+/**
+ * Heurística para detectar se a mensagem vem de outro bot/sistema automatizado.
+ * Não é 100% garantido (o WhatsApp não expõe um campo oficial "isBot"),
+ * mas cobre os casos mais comuns.
+ */
+function isProvavelBot(msg: proto.IWebMessageInfo): boolean {
+  const remoteJid = msg.key?.remoteJid || '';
+
+  // 1. JID está na lista de bots conhecidos
+  if (BOT_JIDS.has(remoteJid)) return true;
+
+  // 2. Conta business verificada com nome sugerindo bot
+  const verifiedBizName = (msg as any).verifiedBizName as string | undefined;
+  if (verifiedBizName && BOT_NAME_HINTS.some(hint => verifiedBizName.toLowerCase().includes(hint))) {
+    return true;
+  }
+
+  // 3. pushName sugerindo bot
+  const pushName = msg.pushName || '';
+  if (pushName && BOT_NAME_HINTS.some(hint => pushName.toLowerCase().includes(hint))) {
+    return true;
+  }
+
+  // 4. Mensagens de sistema/protocolo (geralmente originadas por automações, não por humanos)
+  if (msg.message?.protocolMessage) return true;
+
+  return false;
+}
+
+// ==========================================
 // FUNÇÃO EXTRATORA SUPREMA
 // ==========================================
 export function extrairTexto(msg: proto.IWebMessageInfo): string {
@@ -57,7 +102,12 @@ export async function aplicarFiltros(
     return { bloqueado: true, motivo: 'broadcast' };
   }
 
-  // 6. Ignorar mensagens vazias (AGORA BLINDADO)
+  // 6. Ignorar outros bots/sistemas automatizados
+  if (isProvavelBot(msg)) {
+    return { bloqueado: true, motivo: 'bot/sistema automatizado' };
+  }
+
+  // 7. Ignorar mensagens vazias (AGORA BLINDADO)
   const body = extrairTexto(msg);
   
   const hasMedia = !!(
@@ -72,7 +122,7 @@ export async function aplicarFiltros(
     return { bloqueado: true, motivo: 'mensagem vazia' };
   }
 
-  // 7. Permitir apenas contatos padrão
+  // 8. Permitir apenas contatos padrão
   const isAuthorized = remoteJid.endsWith('@s.whatsapp.net') || remoteJid.endsWith('@lid');
   if (!isAuthorized) {
     return { bloqueado: true, motivo: 'mensagem suspeita' };
