@@ -110,11 +110,19 @@ async function iniciarBot() {
         const msg = m.messages[0];
         if (msg.key.fromMe) return;
 
+        console.log(`[RECEBIDA] Mensagem de ${msg.key?.remoteJid} | pushName: ${msg.pushName}`);
+
         const filtro = await aplicarFiltros(msg, sock);
-        if (filtro.bloqueado) return;
+        if (filtro.bloqueado) {
+            console.log(`[FILTRO] Mensagem bloqueada de ${msg.key?.remoteJid} - motivo: ${filtro.motivo}`);
+            return;
+        }
+
+        console.log(`[FILTRO] Mensagem liberada de ${msg.key?.remoteJid}, encaminhando para fila...`);
 
         try {
             await enfileirar(sock, msg, processarMensagem);
+            console.log(`[FILA] Mensagem de ${msg.key?.remoteJid} processada com sucesso.`);
         } catch (err) {
             console.error('[ERRO] Falha ao processar:', err);
         }
